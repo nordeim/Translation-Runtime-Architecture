@@ -217,33 +217,33 @@ Phase 5: CLI, Artifacts & Testing (Day 5)
  
 ### 5.1 CLI Commands 
  
-- [ ] 5.1.1 tra translate input.md --lang zh-en --level L3 --output out.md 
-- [ ] 5.1.2 tra cache-clear [--pattern] 
-- [ ] 5.1.3 tra audit audit_trace.jsonl --format summary|json 
-- [ ] 5.1.4 tra validate input.md out.md --level L3 (standalone verifier) 
+- [x] 5.1.1 tra translate input.md --lang zh-en --level L3 --output out.md 
+- [x] 5.1.2 tra cache-clear [--pattern] 
+- [x] 5.1.3 tra audit audit_trace.jsonl --format summary|json 
+- [x] 5.1.4 tra validate input.md out.md --level L3 (standalone verifier) 
  
 ### 5.2 Artifact Export 
  
-- [ ] 5.2.1 compilation_artifacts/glossary.yaml 
-- [ ] 5.2.2 compilation_artifacts/entity_table.yaml 
-- [ ] 5.2.3 compilation_artifacts/structural_map.json 
-- [ ] 5.2.4 compilation_artifacts/style_profile.yaml 
-- [ ] 5.2.5 audit_trace.jsonl (JSON Lines, one AuditRecord per line) 
+- [x] 5.2.1 compilation_artifacts/glossary.yaml 
+- [x] 5.2.2 compilation_artifacts/entity_table.yaml 
+- [x] 5.2.3 compilation_artifacts/structural_map.json 
+- [x] 5.2.4 compilation_artifacts/style_profile.yaml 
+- [x] 5.2.5 audit_trace.jsonl (JSON Lines, one AuditRecord per line) 
  
 ### 5.3 Benchmark Test Suite (TRA-BENCHMARK-SUITE.md) 
  
-- [ ] 5.3.1 Create test fixtures for all S/F/T/D/E cases 
-- [ ] 5.3.2 Implement BenchmarkRunner: 
+- [x] 5.3.1 Create test fixtures for all S/F/T/D/E cases 
+- [x] 5.3.2 Implement BenchmarkRunner: 
     - Load case, run pipeline, assert success criteria 
     - S-01 to S-06 (Structural), F-01 to F-05 (Factual), T-01 to T-05 (Terminology), D-01 to D-04 (Domain), E-01 to E-03 (Ambiguity) 
-- [ ] 5.3.3 L3 conformance gate: zero BLOCKING diagnostics on benchmark subset 
-- [ ] 5.3.4 Regression test: cache hit produces byte-identical output 
+- [x] 5.3.3 L3 conformance gate: zero BLOCKING diagnostics on benchmark subset 
+- [x] 5.3.4 Regression test: cache hit produces byte-identical output 
  
 ### 5.4 Example Runs 
  
-- [ ] 5.4.1 Create examples/security_advisory_zh.md (realistic input) 
-- [ ] 5.4.2 Document expected outputs for each conformance level 
-- [ ] 5.4.3 Add README with usage instructions 
+- [x] 5.4.1 Create examples/security_advisory_zh.md (realistic input) 
+- [x] 5.4.2 Document expected outputs for each conformance level 
+- [x] 5.4.3 Add README with usage instructions 
  
 ---
  

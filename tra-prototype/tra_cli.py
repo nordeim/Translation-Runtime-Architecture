@@ -16,8 +16,32 @@ from rich.table import Table
 from tra.cache import TranslationCache
 from tra.config import BootstrapConfig
 from tra.diagnostics import AuditTrail
+from tra.memory import ConformanceLevel
+from tra.validate import ValidationReport, validate_translation
 
 console = Console()
+
+# Accept either full conformance values (L3_STRICT) or shorthand (L3).
+_LEVEL_ALIASES = {
+    "l1": "L1_BASIC",
+    "l2": "L2_PROFESSIONAL",
+    "l3": "L3_STRICT",
+    "l4": "L4_FORENSIC",
+}
+
+
+def _resolve_level(value: str) -> ConformanceLevel:
+    """Resolve a conformance level from full value or shorthand (L3 / L3_STRICT)."""
+    try:
+        return ConformanceLevel(value)
+    except ValueError:
+        canonical = _LEVEL_ALIASES.get(value.strip().lower())
+        if canonical is None:
+            raise click.BadParameter(
+                "unknown conformance level "
+                f"{value!r}; use L1-L4 or L1_BASIC..L4_FORENSIC"
+            ) from None
+        return ConformanceLevel(canonical)
 
 
 @click.group()
@@ -53,7 +77,7 @@ def translate(
     if lang:
         cfg.language_pair = lang
     if level:
-        cfg.conformance_level = level  # type: ignore[assignment]
+        cfg.conformance_level = _resolve_level(level)
 
     console.print(
         f"[bold]TRA[/bold] bootstrap OK — "
@@ -129,6 +153,54 @@ def audit(trace: Path, fmt: str) -> None:
         )
     console.print(table)
     console.print(f"[bold]{len(records)}[/bold] records")
+
+
+@cli.command(name="validate")
+@click.argument("input_md", type=click.Path(exists=True, path_type=Path))
+@click.argument("output_md", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--level",
+    default=None,
+    help="Conformance level for the pass gate, e.g. L3 or L3_STRICT. "
+    "Defaults to config.",
+)
+@click.pass_context
+def validate(
+    ctx: click.Context,
+    input_md: Path,
+    output_md: Path,
+    level: str | None,
+) -> None:
+    """Standalone verifier: audit OUTPUT_MD against INPUT_MD (no re-translate).
+
+    Passes iff zero BLOCKING diagnostics are raised at the conformance LEVEL.
+    """
+    cfg = BootstrapConfig.from_yaml(ctx.obj["config_path"])
+    if level:
+        cfg.conformance_level = _resolve_level(level)
+
+    report = validate_translation(input_md, output_md, cfg)
+
+    _print_validation(report)
+
+
+def _print_validation(report: ValidationReport) -> None:
+    s = report.summary()
+    console.print(
+        f"[bold]Validation[/bold] level=[cyan]{report.level.value}[/cyan] "
+        f"— BLOCKING={s['blocking']} WARNING={s['warnings']} INFO={s['info']}"
+    )
+    for d in report.blocking:
+        console.print(f"  [red]BLOCKING[/red] [{d.subsystem}] {d.issue}")
+    for d in report.warnings:
+        console.print(f"  [yellow]WARNING[/yellow] [{d.subsystem}] {d.issue}")
+    if report.passed:
+        console.print("[green]PASS[/green]: candidate meets the conformance gate.")
+        raise SystemExit(0)
+    console.print(
+        "[red]FAIL[/red]: candidate raised BLOCKING diagnostics; not conformant."
+    )
+    raise SystemExit(1)
 
 
 if __name__ == "__main__":

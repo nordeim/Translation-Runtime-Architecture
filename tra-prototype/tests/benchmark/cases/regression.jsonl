@@ -1,0 +1,1 @@
+{"id": "R-01", "category": "R", "source": "系统成立 under heavy load.", "level": "L3_STRICT", "must_contain": ["The system is Confirmed"], "must_not_contain": [], "zero_blocking": true, "description": "Deterministic regression anchor for the topic-comment rule layer."}
