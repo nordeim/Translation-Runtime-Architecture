@@ -107,6 +107,7 @@ class AuditTrail:
         self.path = Path(path)
         self._seq = 0
         self._buffer: list[AuditRecord] = []
+        self._flushed = 0
 
     def append(
         self,
@@ -129,14 +130,19 @@ class AuditTrail:
         return record
 
     def flush(self) -> None:
-        """Persist buffered records to JSONL (append mode)."""
+        """Persist buffered records to JSONL (append mode).
+
+        The in-memory `_buffer` is NOT cleared — it is the full append-only
+        log (load() re-reads from disk). Only records written since the last
+        flush are appended, so re-flushing never duplicates.
+        """
         if not self._buffer:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as fh:
-            for rec in self._buffer:
+            for rec in self._buffer[self._flushed :]:
                 fh.write(rec.model_dump_json() + "\n")
-        self._buffer.clear()
+        self._flushed = len(self._buffer)
 
     def load(self) -> list[AuditRecord]:
         """Read all records from the JSONL file (empty if absent)."""

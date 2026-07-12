@@ -48,18 +48,43 @@ def translate(
     level: str | None,
     output: Path | None,
 ) -> None:
-    """Translate INPUT_MD through the TRA pipeline (pipeline lands in Phase 3)."""
+    """Translate INPUT_MD through the full TRA pipeline."""
     cfg = BootstrapConfig.from_yaml(ctx.obj["config_path"])
+    if lang:
+        cfg.language_pair = lang
+    if level:
+        cfg.conformance_level = level  # type: ignore[assignment]
+
     console.print(
         f"[bold]TRA[/bold] bootstrap OK — "
-        f"pair=[cyan]{lang or cfg.language_pair}[/cyan] "
-        f"level=[cyan]{level or cfg.conformance_level.value}[/cyan]"
+        f"pair=[cyan]{cfg.language_pair}[/cyan] "
+        f"level=[cyan]{cfg.conformance_level.value}[/cyan]"
+    )
+
+    from tra.kernel import TRAKernel
+
+    kernel = TRAKernel(cfg)
+    target = kernel.run(input_md)
+
+    if output is None:
+        output = input_md.with_name(f"{input_md.stem}.translated.md")
+    output.write_text(target, encoding="utf-8")
+
+    blocking = sum(
+        1
+        for rec in kernel.audit._buffer
+        if rec.flags_raised and "BLOCKING" in rec.flags_raised
     )
     console.print(
-        "[yellow]Pipeline not yet implemented (Phase 3). "
-        "Phase 0 foundation is in place.[/yellow]"
+        f"[green]Translated[/green] -> [cyan]{output}[/cyan]  "
+        f"(audit: {cfg.audit_trace}, "
+        f"artifacts: {cfg.compilation_dir})"
     )
-    _ = (input_md, output)
+    if blocking:
+        console.print(
+            f"[red]WARNING:[/red] {blocking} BLOCKING flag(s) raised — "
+            "review audit_trace.jsonl before publishing."
+        )
 
 
 @cli.command(name="cache-clear")

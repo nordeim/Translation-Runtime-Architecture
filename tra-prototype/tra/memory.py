@@ -13,7 +13,7 @@ from __future__ import annotations
 from enum import Enum, StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PolicyPriority(int, Enum):
@@ -82,6 +82,8 @@ class DocumentProfile(BaseModel):
     Fields match the ISA contract exactly, including `evidence_style`
     retained for spec fidelity (TRA-ISA-REFERENCE.md), though Spec §4 omits it.
     """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     type: str = Field(..., description="RFC | Advisory | Guide | README | ...")
     register_: str = Field(

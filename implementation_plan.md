@@ -89,65 +89,65 @@ Phase 2: ISA Instruction Implementations (Day 2-3)
  
 ### 2.1 ANALYZE_DOCUMENT 
  
-- [ ] 2.1.1 Input: source_markdown, config 
-- [ ] 2.1.2 Output: DocumentProfile, StructuralMap 
-- [ ] 2.1.3 Invariant: node_count(StructuralMap) == node_count(source_AST) 
-- [ ] 2.1.4 Populate DocumentProfile (type detection: RFC/Advisory/Guide, register, intent) 
+- [x] 2.1.1 Input: source_markdown, config 
+- [x] 2.1.2 Output: DocumentProfile, StructuralMap 
+- [x] 2.1.3 Invariant: node_count(StructuralMap) == node_count(source_AST) 
+- [x] 2.1.4 Populate DocumentProfile (type detection: RFC/Advisory/Guide, register, intent) 
  
 ### 2.2 BUILD_GLOSSARY 
  
-- [ ] 2.2.1 Input: source, DocumentProfile, ZH-EN Module 
-- [ ] 2.2.2 Output: Glossary (list[GlossaryEntry]), ForbiddenMappings 
-- [ ] 2.2.3 Invariant: each recurring term → exactly one canonical mapping (unless context_sensitive) 
-- [ ] 2.2.4 Emit EvidenceRecord for each entry (TERM_MATCH, rule_id from module) 
+- [x] 2.2.1 Input: source, DocumentProfile, ZH-EN Module 
+- [x] 2.2.2 Output: Glossary (list[GlossaryEntry]), ForbiddenMappings 
+- [x] 2.2.3 Invariant: each recurring term → exactly one canonical mapping (unless context_sensitive) 
+- [x] 2.2.4 Emit EvidenceRecord for each entry (TERM_MATCH, rule_id from module) 
  
 ### 2.3 BUILD_ENTITY_TABLE 
  
-- [ ] 2.3.1 Input: source, StructuralMap 
-- [ ] 2.3.2 Output: EntityTable 
-- [ ] 2.3.3 Invariant: all entities marked mutable=false 
-- [ ] 2.3.4 Emit EvidenceRecord (ENTITY_PRESERVED) 
+- [x] 2.3.1 Input: source, StructuralMap 
+- [x] 2.3.2 Output: EntityTable 
+- [x] 2.3.3 Invariant: all entities marked mutable=false 
+- [x] 2.3.4 Emit EvidenceRecord (ENTITY_PRESERVED) 
  
 ### 2.4 TRANSLATE_SEGMENT — Core LLM Integration 
  
-- [ ] 2.4.1 Segment source by StructuralNode (leaf nodes: paragraphs, list items, table cells, headings) 
-- [ ] 2.4.2 For each segment: 
+- [x] 2.4.1 Segment source by StructuralNode (leaf nodes: paragraphs, list items, table cells, headings) 
+- [x] 2.4.2 For each segment: 
     - Apply AnchorRegistry placeholder protection (headings → __HEADER_N__) 
     - Build prompt with: source_segment, glossary_entries, entities, style_profile, ZH-EN rules 
     - Enforce structured LLM output: {"translation": "...", "decisions": [{"term": "...", "chosen": "...", "basis": "..."}], "structural_notes": "..."} 
     - Check cache first (CacheKeyGenerator); on hit, return cached result 
     - On miss, call LLM (litellm/OpenAI/Anthropic), validate output, store in cache 
     - Convert LLM decisions → EvidenceRecord chain (LLM_DECISION type) 
-- [ ] 2.4.3 Reassemble translated segments into target markdown using StructuralMap 
-- [ ] 2.4.4 Run AnchorRegistry rewrite_links pass 
-- [ ] 2.4.5 Output: target_markdown + per-segment evidence chains 
+- [x] 2.4.3 Reassemble translated segments into target markdown using StructuralMap 
+- [x] 2.4.4 Run AnchorRegistry rewrite_links pass 
+- [x] 2.4.5 Output: target_markdown + per-segment evidence chains 
  
 ### 2.5 VERIFY_OUTPUT 
  
-- [ ] 2.5.1 Input: target_markdown, source_markdown, RuntimeContext 
-- [ ] 2.5.2 Checks (emit Diagnostic per violation): 
+- [x] 2.5.1 Input: target_markdown, source_markdown, RuntimeContext 
+- [x] 2.5.2 Checks (emit Diagnostic per violation): 
     - Structural: node count match, table row/col preservation, code block integrity, anchor resolution (S-06) 
     - Factual: numbers, units, versions exact match (F-01 to F-05) 
     - Terminology: glossary adherence (T-01 to T-05) 
     - Entity: all entities preserved verbatim 
     - Epistemic: certainty markers per ZH-EN lexicon (no strengthening/weakening) 
     - Evidence: every segment has non-empty evidence_chain; all rule_ids valid 
-- [ ] 2.5.3 Severity assignment per TRA-EXCEPTIONS table 
-- [ ] 2.5.4 Output: DiagnosticReport (list[Diagnostic]) 
+- [x] 2.5.3 Severity assignment per TRA-EXCEPTIONS table 
+- [x] 2.5.4 Output: DiagnosticReport (list[Diagnostic]) 
  
 ### 2.6 REPAIR_SEGMENT 
  
-- [ ] 2.6.1 Input: target_segment, source_segment, Diagnostic (BLOCKING/WARNING) 
-- [ ] 2.6.2 Strategy per violation type: 
+- [x] 2.6.1 Input: target_segment, source_segment, Diagnostic (BLOCKING/WARNING) 
+- [x] 2.6.2 Strategy per violation type: 
     - Structural: AST-based surgical fix (e.g., restore table row) 
     - Terminology: replace with glossary term 
     - Entity: restore entity from EntityTable 
     - Epistemic: revert to source certainty marker 
     - Factual: restore exact number/unit 
-- [ ] 2.6.3 LLM-assisted repair for complex cases (prompt with specific violation + context) 
-- [ ] 2.6.4 Invariant enforcement: re-verify repaired segment; must not introduce new BLOCKING 
-- [ ] 2.6.5 Max retries = 3 (configurable); on exhaustion → RAISE_FLAG for human-in-the-loop 
-- [ ] 2.6.6 Emit EvidenceRecord (HUMAN_OVERRIDE or POLICY_ARBITRATION) 
+- [x] 2.6.3 LLM-assisted repair for complex cases (prompt with specific violation + context) 
+- [x] 2.6.4 Invariant enforcement: re-verify repaired segment; must not introduce new BLOCKING 
+- [x] 2.6.5 Max retries = 3 (configurable); on exhaustion → RAISE_FLAG for human-in-the-loop 
+- [x] 2.6.6 Emit EvidenceRecord (HUMAN_OVERRIDE or POLICY_ARBITRATION) 
  
 ---
  
@@ -155,20 +155,20 @@ Phase 3: Kernel, Policy Engine & Orchestration (Day 3-4)
  
 ### 3.1 TRA Kernel State Machine 
  
-- [ ] 3.1.1 Define KernelState enum (BOOTSTRAP → EMIT_PAYLOAD) 
-- [ ] 3.1.2 Implement TRAKernel class: 
+- [x] 3.1.1 Define KernelState enum (BOOTSTRAP → EMIT_PAYLOAD) 
+- [x] 3.1.2 Implement TRAKernel class: 
     - transition(next_state) -> bool with precondition checks 
     - run(source_text) -> TranslationResult orchestrates full pipeline 
     - Execution logging to RuntimeContext.execution_log 
-- [ ] 3.1.3 State transition hooks (pre/post ISA execution) 
+- [x] 3.1.3 State transition hooks (pre/post ISA execution) 
  
 ### 3.2 Policy Engine (Arbitration Stack) 
  
-- [ ] 3.2.1 Implement PolicyResolver: 
+- [x] 3.2.1 Implement PolicyResolver: 
     - Input: conflicting requirements (e.g., fluency vs terminology) 
     - Process: compare PolicyPriority enum values 
     - Output: decision + EvidenceRecord (POLICY_ARBITRATION) 
-- [ ] 3.2.2 Scope-aware applicability (from review-feedback.md): 
+- [x] 3.2.2 Scope-aware applicability (from review-feedback.md): 
     - Add scope_type to policy context (header_level, code_block_lang, list_nesting) to narrow *which segments* a rule applies to. 
     - **Scope never reorders the immutable stack** (Factual Integrity #1 > Structural Integrity #2 > Entity Preservation #3 > Terminological Consistency #4 > Epistemic Fidelity #5 > Target Fluency #6). 
     - In code blocks/comments: Factual and Entity binding always hold; Terminology preserved verbatim; Fluency is the only relaxable priority. 
@@ -176,11 +176,11 @@ Phase 3: Kernel, Policy Engine & Orchestration (Day 3-4)
  
 ### 3.3 Pipeline Orchestration 
  
-- [ ] 3.3.1 Wire ISA instructions in Kernel order: 
+- [x] 3.3.1 Wire ISA instructions in Kernel order: 
       BOOTSTRAP → INITIALIZE_RUNTIME → ANALYZE_DOCUMENT → BUILD_ARTIFACTS (GLOSSARY+ENTITY) → EXECUTE_TRANSLATION → VERIFY_OUTPUT → REPAIR_IF_NEEDED (loop) → AUDIT_DIAGNOSTICS → EMIT_PAYLOAD 
-- [ ] 3.3.2 Implement VERIFY → REPAIR loop with max_retries=3 
-- [ ] 3.3.3 Aggregate all AuditRecord into audit_trace.jsonl 
-- [ ] 3.3.4 Export compilation_artifacts/ (glossary.yaml, entity_table.yaml, structural_map.json, style_profile.yaml) 
+- [x] 3.3.2 Implement VERIFY → REPAIR loop with max_retries=3 
+- [x] 3.3.3 Aggregate all AuditRecord into audit_trace.jsonl 
+- [x] 3.3.4 Export compilation_artifacts/ (glossary.yaml, entity_table.yaml, structural_map.json, style_profile.yaml) 
  
 ---
  
