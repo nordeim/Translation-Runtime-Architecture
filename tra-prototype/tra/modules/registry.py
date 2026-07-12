@@ -38,3 +38,36 @@ class ModuleRegistry:
 
     def all(self) -> list[ModuleInterface]:
         return list(self._modules.values())
+
+
+def build_default_registry() -> ModuleRegistry:
+    """Construct the canonical registry with bundled modules (Phase 4.1.2).
+
+    New modules (e.g. an `fr-en` bridge) register here without touching the
+    Kernel or ISA — this is the one sanctioned extension point.
+    """
+    from .zh_en import ZHENModule
+
+    registry = ModuleRegistry()
+    registry.register(ZHENModule().as_interface())
+    return registry
+
+
+def registry_for_language_pair(pair: str) -> ModuleRegistry:
+    """Return a registry scoped to one language pair (e.g. 'ZH -> EN')."""
+    registry = build_default_registry()
+    if "->" not in pair:
+        return registry
+    source_lang = pair.split("->", 1)[0].strip().lower()
+    scoped = ModuleRegistry()
+
+    for mod in registry.all():
+        if mod.kind != "language":
+            scoped.register(mod)
+            continue
+        direction = (
+            str(mod.metadata.get("direction", "")).split("->", 1)[0].strip().lower()
+        )
+        if direction == source_lang:
+            scoped.register(mod)
+    return scoped

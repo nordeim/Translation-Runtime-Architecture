@@ -331,15 +331,19 @@ def _rule_translate(
 ) -> tuple[str, str]:
     """Deterministic canonical translation via glossary + entity + epistemic."""
     out = segment
-    # 1. Epistemic-certainty lexicon first (exact, never drift).
+    # 1. Language-module rule layer FIRST (parataxis->hypotaxis, nominalization,
+    #    punctuation). Topic-comment forms like 系统成立 must resolve before the
+    #    atomic 成立 -> Confirmed substitution would split them apart.
+    out = _MODULE.apply_zh_rules(out)
+    # 2. Epistemic-certainty lexicon (exact, never drift).
     for src, tgt in zh_en.EPISTEMIC_LEXICON.items():
         if src in out:
             out = out.replace(src, tgt)
-    # 2. Canonical glossary substitution.
+    # 3. Canonical glossary substitution.
     for src, tgt in glossary.items():
         if src in out:
             out = out.replace(src, tgt)
-    # 3. Entities inserted verbatim (already source form; no-op preserve).
+    # 4. Entities inserted verbatim (already source form; no-op preserve).
     for ent in entities:
         # Ensure casing preserved exactly; nothing to transform.
         if ent.name not in out and ent.name in segment:

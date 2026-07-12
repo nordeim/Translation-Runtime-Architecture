@@ -239,3 +239,24 @@ def test_repair_resolves_epistemic_drift():
     repaired = repair_segment("it is Valid", "成立", diag, ctx, ev, _audit())
     assert "Confirmed" in repaired
     assert "Valid" not in repaired
+
+
+# --- Phase 4 integration: module rule layer fires via ISA ------------
+
+
+def test_translate_segment_applies_zh_rule_layer():
+    ctx = _ctx()
+    ev = EvidenceRegistry()
+    build_glossary(
+        "成立",
+        DocumentProfile(type="x", register_="y", intent="z", audience="a"),
+        ctx,
+        ev,
+        _audit(),
+    )
+    cache = TranslationCache("./cache", enabled=True)
+    res = translate_segment("系统成立。", ctx, cache, ev, _audit())
+    # Parataxis->hypotaxis rule layer resolves topic-comment to subject-predicate.
+    assert "The system is Confirmed" in res.translation
+    # Punctuation normalized to half-width.
+    assert res.translation.endswith(". ") or res.translation.endswith(".")

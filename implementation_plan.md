@@ -188,28 +188,28 @@ Phase 4: ZH-EN Language Module Integration (Day 4)
  
 ### 4.1 Module Loader 
  
-- [ ] 4.1.1 Implement ModuleRegistry (pluggable: language, domain, formatting) 
-- [ ] 4.1.2 Load zh_en.py with rule implementations: 
+- [x] 4.1.1 Implement ModuleRegistry (pluggable: language, domain, formatting) 
+- [x] 4.1.2 Load zh_en.py with rule implementations: 
  
 ### 4.2 ZH → EN Rules 
  
-- [ ] 4.2.1 Parataxis→Hypotaxis: subject insertion, conjunction insertion, topic-comment → subject-predicate 
-- [ ] 4.2.2 Nominalization verbalization: pattern matching + verb replacement map 
-- [ ] 4.2.3 Epistemic mapping: exact lexicon enforcement (成立→Confirmed, 高度可信→highly credible, etc.) 
-- [ ] 4.2.4 Information order preservation (evidence→conclusion for verification reports) 
+- [x] 4.2.1 Parataxis→Hypotaxis: subject insertion, conjunction insertion, topic-comment → subject-predicate 
+- [x] 4.2.2 Nominalization verbalization: pattern matching + verb replacement map 
+- [x] 4.2.3 Epistemic mapping: exact lexicon enforcement (成立→Confirmed, 高度可信→highly credible, etc.) 
+- [x] 4.2.4 Information order preservation (evidence→conclusion for verification reports) 
  
 ### 4.3 EN → ZH Rules 
  
-- [ ] 4.3.1 Translationese avoidance: clause breaking, passive reduction 
-- [ ] 4.3.2 Four-character expressions (四字格) map 
-- [ ] 4.3.3 Punctuation: full-width/half-width rules with spacing 
-- [ ] 4.3.4 Entity preservation (official Chinese names where universally accepted) 
+- [x] 4.3.1 Translationese avoidance: clause breaking, passive reduction 
+- [x] 4.3.2 Four-character expressions (四字格) map 
+- [x] 4.3.3 Punctuation: full-width/half-width rules with spacing 
+- [x] 4.3.4 Entity preservation (official Chinese names where universally accepted) 
  
 ### 4.4 Module Interface 
  
-- [ ] 4.4.1 get_glossary_mappings() -> dict 
-- [ ] 4.4.2 get_style_profile() -> StyleProfile 
-- [ ] 4.4.3 apply_rules(source: str, direction: str) -> str (pre/post processing hooks) 
+- [x] 4.4.1 get_glossary_mappings() -> dict 
+- [x] 4.4.2 get_style_profile() -> StyleProfile 
+- [x] 4.4.3 apply_rules(source: str, direction: str) -> str (pre/post processing hooks) 
  
 ---
  
