@@ -2,7 +2,7 @@
 
 ## What this repo is
 
-Specification-only repo. TRA = Translation Runtime Architecture v1.0 — normative spec for high-fidelity technical translation engines. Five markdown files are the entire product. **No source code, no build system, no test runner, no package manifest.**
+Specification-only repo. TRA = Translation Runtime Architecture v1.0 — normative spec for high-fidelity technical translation engines. The **five Spec files** are the normative product; meta-docs (`README.md`, `CLAUDE.md`, `start-here.md`), planning notes (`prototype.md`, `review-feedback.md`), and `to_translate.md` accompany them. **No source code, no build system, no test runner, no package manifest.** Any conformant engine lives in a separate repository.
 
 ## Files and roles
 
@@ -11,10 +11,12 @@ Specification-only repo. TRA = Translation Runtime Architecture v1.0 — normati
 | `TRA-SPECIFICATION.md` | Authoritative master spec (Kernel, Memory, ISA, Runtime, Policy, Exceptions, QA, Conformance, Modules). Source of truth. |
 | `TRA-ISA-REFERENCE.md` | Expanded contracts for the six ISA instructions. Companion to Spec §3. |
 | `TRA-MODULE-ZH-EN.md` | Language Module example (ZH↔EN bridge). Template for new modules. |
-| `TRA-BENCHMARK-SUITE.md` | 100+ test cases for L3/L4 certification. |
+| `TRA-BENCHMARK-SUITE.md` | Representative test categories (S/F/T/D/E) seeded with concrete cases, intended to grow toward 100+, for L3/L4 certification. |
 | `TRA-CONFORMANCE-GUIDE.md` | Auditor checklist for L1–L4 certification. |
 
 **Cross-referencing:** Use document title and section numbers (e.g., "Spec §5.1"), not filename numeric prefixes. The file prefix numbers (1–4) do not match section order in the spec.
+
+**States vs. instructions:** The KERNEL states are the lifecycle; the ISA instructions *execute within* those states — `BUILD_ARTIFACTS` contains `BUILD_GLOSSARY` + `BUILD_ENTITY_TABLE`. Canonical state labels (Spec §2.1): `BOOTSTRAP → INITIALIZE_RUNTIME → ANALYZE_DOCUMENT → BUILD_ARTIFACTS → EXECUTE_TRANSLATION → VERIFY_OUTPUT → REPAIR_IF_NEEDED → AUDIT_DIAGNOSTICS → EMIT_PAYLOAD`.
 
 ## How to work here
 

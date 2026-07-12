@@ -1,19 +1,21 @@
+> **Repo scope note:** Per the repo's own boundary rule (see `README.md` / `AGENTS.md` / `CLAUDE.md`), any concrete engine claiming TRA compliance lives in a *separate* repository. This file is an **architectural critique of `prototype.md`** (an external `tra-prototype/` codebase) plus embedded design micro-docs. It is planning context for that external repo, not part of the normative spec, and is kept here only as planning context.
+
 这份计划书扎实、专业且高度忠实于TRA规范，展现了极强的工程落地意识。你对Pydantic模型、不变式断言和ISA指令的拆解几乎无可挑剔。
 
 然而，作为一个架构评审，我必须指出：该计划存在三个被严重低估的“架构级”风险。如果不在Phase 0/1予以纠正，原型将在L3验证阶段彻底崩塌。
 
-🚨 1. 致命缺陷：LLM的“非确定性”与TRA的“确定性虚拟机”冲突
+🚨 1. 风险：LLM的”非确定性”与TRA的”确定性”要求存在张力
 
-TRA规范的本质是确定性状态机（给定输入X，必须产出确定的输出Y和审计轨迹）。而计划中依赖 Temperature=0 的LLM，在数学上无法保证跨运行的一致性（模型升级、浮点误差、API抖动都会改变输出）。
+TRA规范定义的是**确定性的生命周期与确定性的仲裁**（顺序状态机、固定的优先级栈、可复现的冲突裁决）；它是 LLM 无关的，并不要求逐字节相同的译文。但计划的原型依赖 LLM，而即便 Temperature=0 也无法在数学上保证跨运行的一致性（模型升级、浮点误差、API抖动都会改变输出）。这对 L4（取证级可重现性）是真实缺口，对 L3（严格级）主要是工程稳健性考量。
 
 · 后果：VERIFY 发现错误 → REPAIR 调用LLM修复 → 修复引入新错误 → 死循环或审计轨迹无限膨胀。
-· 必须补救：在 TRANSLATE_SEGMENT 与 REPAIR_SEGMENT 外层，强制增加 “确定性缓存层”（Cache Key = 输入原文 + 术语表Hash + 模型版本）。若命中缓存，直接返回上次的确定性结果，否则才调用LLM并写入缓存。这是满足L4“可重现性”的唯一出路。
+· 建议补救：在 TRANSLATE_SEGMENT 与 REPAIR_SEGMENT 外层，增加 “确定性缓存层”（Cache Key = 输入原文 + 术语表Hash + 模型版本 + 策略栈Hash）。若命中缓存，直接返回上次的确定性结果，否则才调用LLM并写入缓存。这是满足L4”可重现性”的推荐手段；缓存是增强可复现性的工程实践，并非 TRA 一致性等级的强制要求（一致性要求的是确定性的流程与仲裁，而非确定性的译文文本）。
 
 🧩 2. 结构保真度盲区：Markdown锚点与交叉引用的“隐形断裂”
 
 计划提到“翻译叶子节点，重新组装”，但技术文档中最关键的锚点链接（[跳转](#heading-1)） 是全局依赖的。当 # 系统架构 被译为 # System Architecture 时，所有指向它的 [详见](#系统架构) 链接会全部失效。
 
-· 架构建议：不应在Phase 1使用普通Markdown解析器。必须采用AST双向映射（如 markdown-it-py + 自定义Token遍历），在 ANALYZE_DOCUMENT 阶段构建 “Heading-ID映射表”，并在 TRANSLATE_SEGMENT 后强制执行 “锚点重写Pass”。否则原型无法通过基准测试中的 STRUCTURAL-FIDELITY-005 用例。
+· 架构建议：不应在Phase 1使用普通Markdown解析器。必须采用AST双向映射（如 markdown-it-py + 自定义Token遍历），在 ANALYZE_DOCUMENT 阶段构建 “Heading-ID映射表”，并在 TRANSLATE_SEGMENT 后强制执行 “锚点重写Pass”。——当前基准套件尚无锚点/交叉引用用例（见 TRA-BENCHMARK-SUITE.md 新增的 S-06），但锚点断裂是 L2/L3 结构保真度的真实缺口，原型应主动实现该 Pass。
 
 📜 3. L3审计的证据链空洞（“证据”不等于“日志”）
 
@@ -214,7 +216,7 @@ Required LLM Output Format:
   1. Every TRANSLATE_SEGMENT must produce exactly one AuditRecord.
   2. The evidence_chain cannot be empty. If empty, VERIFY raises a BLOCKING flag.
   3. Every EvidenceRecord must cite a valid rule_id or a recognized module. Unknown rules trigger a WARNING.
-  4. If an EvidenceRecord cites confidence_note < 0.5, the system automatically escalates to REPAIR_SEGMENT for disambiguation.
+  4. Routing MUST NOT use confidence_note for any decision — it is recorded for debugging only, never read by VERIFY or REPAIR (this honors TRA's "never self-score" invariant). Low-evidence routing, if needed, is gated solely on evidence *presence* (empty evidence_chain → RAISE_FLAG), never on a numeric score.
 
 ```
 

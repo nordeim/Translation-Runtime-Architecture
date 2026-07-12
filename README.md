@@ -6,7 +6,7 @@ TRA defines the execution model, instruction set, state management, and conforma
 
 ## What This Is
 
-This is a **specification repository**, not a code repository. The five markdown files below are the entire product. There is no source code, no build system, no test runner, and no package manifest.
+This is a **specification repository**, not a code repository. The five Spec files below are the normative product. Additional meta-docs (`README.md`, `AGENTS.md`, `CLAUDE.md`, `start-here.md`), planning notes (`prototype.md`, `review-feedback.md`), and `to_translate.md` accompany them. There is no source code, no build system, no test runner, and no package manifest — any conformant engine lives in a separate repository.
 
 ## Documents
 
@@ -15,7 +15,7 @@ This is a **specification repository**, not a code repository. The five markdown
 | [`TRA-SPECIFICATION.md`](TRA-SPECIFICATION.md) | Authoritative master spec — Kernel, Memory, ISA, Runtime, Policy, Exceptions, QA, Conformance, Modules. **Source of truth.** |
 | [`TRA-ISA-REFERENCE.md`](TRA-ISA-REFERENCE.md) | Expanded contracts for the six ISA instructions. Companion to Spec §3. |
 | [`TRA-MODULE-ZH-EN.md`](TRA-MODULE-ZH-EN.md) | Language Module example (ZH↔EN bridge). Template for authoring new modules. |
-| [`TRA-BENCHMARK-SUITE.md`](TRA-BENCHMARK-SUITE.md) | 100+ test cases (S/F/T/D/E categories) for L3/L4 certification. |
+| [`TRA-BENCHMARK-SUITE.md`](TRA-BENCHMARK-SUITE.md) | Representative test categories (S/F/T/D/E) seeded with concrete cases, intended to grow toward 100+, for L3/L4 certification. |
 | [`TRA-CONFORMANCE-GUIDE.md`](TRA-CONFORMANCE-GUIDE.md) | Auditor checklist for L1–L4 certification. |
 
 **Cross-referencing:** Use document title and section numbers (e.g., "Spec §5.1"), not filename numeric prefixes. The prefix numbers (1–4) do not match section order in the spec.
@@ -44,6 +44,8 @@ TRA models a translation engine as a virtual machine with an immutable core and 
 │  Extend behavior without touching Kernel or ISA                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+> **States vs. instructions:** The KERNEL states above are the lifecycle; the ISA instructions *execute within* those states — e.g., `BUILD_ARTIFACTS` contains `BUILD_GLOSSARY` + `BUILD_ENTITY_TABLE`, and `EXECUTE_TRANSLATION` contains `TRANSLATE_SEGMENT`. The canonical state labels (from `TRA-SPECIFICATION.md` §2.1) are `BOOTSTRAP → INITIALIZE_RUNTIME → ANALYZE_DOCUMENT → BUILD_ARTIFACTS → EXECUTE_TRANSLATION → VERIFY_OUTPUT → REPAIR_IF_NEEDED → AUDIT_DIAGNOSTICS → EMIT_PAYLOAD`.
 
 ## Conformance Levels
 

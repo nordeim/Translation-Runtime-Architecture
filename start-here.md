@@ -16,7 +16,11 @@
 1. 分析 (ANALYZE_DOCUMENT)：让LLM先分析文档，输出结构图谱和文档画像。
 2. 构建 (BUILD_ARTIFACTS)：要求提取术语表和实体表。
 3. 翻译 (TRANSLATE_SEGMENT)：基于前两步结果逐段翻译。
-4. 验证与审计 (VERIFY & AUDIT)：最后根据TRA规则进行自检。
+4. 验证 (VERIFY_OUTPUT)：根据TRA规则进行证据式自检。
+5. 修复 (REPAIR_SEGMENT)：若 VERIFY 返回 BLOCKING/WARNING 违规，定向修复（只解决该违规、不引入新违规、不违背更高优先级策略）。修复后回到 4 重新验证；设定最大重试次数（如3次），仍失败则升级人工介入。
+6. 审计与产出 (AUDIT_DIAGNOSTICS → EMIT_PAYLOAD)：生成审计追踪（audit_trace）并输出译文。
+
+> 注：上述步骤对应 TRA-KERNEL 的规范状态机 BOOTSTRAP → INITIALIZE_RUNTIME → ANALYZE_DOCUMENT → BUILD_ARTIFACTS → EXECUTE_TRANSLATION → VERIFY_OUTPUT → REPAIR_IF_NEEDED → AUDIT_DIAGNOSTICS → EMIT_PAYLOAD。ISA 指令运行在对应的内核状态之内（BUILD_ARTIFACTS 内含 BUILD_GLOSSARY 与 BUILD_ENTITY_TABLE）。
 
 ✅ 第三步：把关——作为质量检查清单
 

@@ -2,7 +2,7 @@
 **Standardized Evaluation Suite v1.0**
 
 ## Overview
-This suite contains 100+ representative test cases designed to validate TRA conformance across diverse domains and structural complexities. Engines must pass these cases to achieve L3/L4 certification.
+This suite defines representative test categories (Structural, Factual, Terminology, Domain, Ambiguity) with concrete seed cases to validate TRA conformance. It is seeded with the cases below and intended to grow toward 100+ cases; engines must pass the relevant cases (per their conformance level) to achieve L3/L4 certification.
 
 ## Category 1: Structural Integrity (Markdown & Formatting)
 | ID | Test Case | Success Criteria |
@@ -12,6 +12,7 @@ This suite contains 100+ representative test cases designed to validate TRA conf
 | S-03 | Inline Code vs. Prose | Backticks preserved; content inside backticks untranslated. |
 | S-04 | Blockquotes within Lists | `>` syntax preserved at correct indentation level. |
 | S-05 | Horizontal Rules as Dividers | `---` preserved exactly; not converted to headings. |
+| S-06 | Internal Anchors & Cross-References | Heading translation updates the target slug (e.g., `# System Setup` → `# 系统安装` rewrites `[link](#system-setup)` → new slug). Links must resolve post-translation; broken links flagged as `WARNING`. Code-block-internal links are not rewritten. |
 
 ## Category 2: Factual & Numerical Precision
 | ID | Test Case | Success Criteria |

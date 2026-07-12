@@ -1,3 +1,5 @@
+> **Repo scope note:** Per the repo's own boundary rule (see `README.md` / `AGENTS.md` / `CLAUDE.md`), any concrete engine claiming TRA compliance lives in a *separate* repository. This file is a **planning note for `tra-prototype/`** — an external codebase — not part of the normative spec. It is kept here as planning context only.
+
 **Meticulous Plan for a Practical TRA Prototype**
 
 I have reviewed the TRA specification thoroughly. Below is a **detailed, phased implementation plan** for a practical, minimal-yet-conformant prototype. The goal is a working **Python-based Translation Runtime Engine** (call it `tra-prototype`) that demonstrates the core invariants, Kernel lifecycle, ISA, Memory Model, Policy Engine, and L1–L3 conformance for ZH↔EN technical Markdown translation. It will be **human-in-the-loop friendly** and extensible.
@@ -81,7 +83,7 @@ Implement each as a class/method with:
 - Logging/visualization of state machine.
 - Documentation + example run.
 
-**Timeline Estimate**: 2-4 days for MVP (core pipeline working on sample tech docs). Iterative refinement afterward.
+**Timeline Estimate**: 2-4 days for a naive MVP, but see `review-feedback.md` §"关于时间线（2~4天）的现实性评估" — with the hardened scope (anchor mapping, evidence framework, deterministic cache, termination guards) the realistic estimate is **6-8 person-days** for a conformant MVP. Plan accordingly.
 
 ### 3. Key Challenges & Mitigations
 - **LLM Reliability**: Use structured prompting + glossary injection + post-verify/repair loop. Temperature=0 where possible. Fallback rules for critical parts.
