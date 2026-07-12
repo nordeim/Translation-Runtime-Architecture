@@ -1,0 +1,18 @@
+# Phase 0 runtime dependencies
+pydantic>=2.8
+pydantic-settings>=2.3
+markdown-it-py>=3.0
+mdit-py-plugins>=0.4
+diskcache>=5.6
+pyyaml>=6.0
+structlog>=24.1
+click>=8.1
+rich>=13.7
+litellm>=1.49
+
+# Dev / tooling
+pytest>=8.2
+pytest-asyncio>=0.23
+ruff>=0.5
+black>=24.4
+mypy>=1.10

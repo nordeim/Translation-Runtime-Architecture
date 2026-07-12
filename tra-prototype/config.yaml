@@ -1,0 +1,27 @@
+# tvm_bootstrap — engine configuration (TRA-SPECIFICATION.md §2.2 Immutable Config)
+# Parsed once at BOOTSTRAP. These values are read-only for the lifetime of a run.
+
+language_pair: "ZH -> EN"      # e.g. "ZH -> EN", "EN -> ZH"
+domain: "Security Advisory"   # Domain Module selector
+conformance_level: "L3_STRICT"  # L1_BASIC | L2_PROFESSIONAL | L3_STRICT | L4_FORENSIC
+
+# Model identity — feeds the deterministic cache key (CACHE_STRATEGY.md).
+# Changing either invalidates prior cache entries (policy_stack_hash handles
+# policy changes; these two handle model-identity changes).
+model_endpoint: "openai/gpt-4o-mini"
+model_version: "2024-07-18"
+
+# Deterministic-cache behaviour.
+cache:
+  enabled: true
+  directory: "./cache"
+  expire: null   # static facts: no TTL
+
+# Repair loop guard (review-feedback.md).
+repair:
+  max_retries: 3
+
+# Output locations for runtime artifacts (TRA-CONFORMANCE-GUIDE.md L3 checklist).
+artifacts:
+  compilation_dir: "./compilation_artifacts"
+  audit_trace: "./audit_trace.jsonl"

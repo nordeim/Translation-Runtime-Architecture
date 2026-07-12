@@ -1,0 +1,15 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# TRA runtime artifacts (generated at run time)
+cache/
+compilation_artifacts/
+audit_trace.jsonl
