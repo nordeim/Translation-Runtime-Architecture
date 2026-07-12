@@ -1,5 +1,7 @@
 TRA Prototype Implementation Plan 
  
+> **Repo scope note:** Per the repo's own boundary rule (see `README.md` / `AGENTS.md` / `CLAUDE.md`), any concrete engine claiming TRA compliance lives in a *separate* repository. This file is an **implementation plan for `tra-prototype/`** — an external codebase — not part of the normative spec. It is kept here as planning context only.
+
 Executive Summary 
  
 This plan builds a Python-based TRA conformant translation engine (tra-prototype) that implements the full TRA v1.0 specification: Kernel state machine, 6 ISA instructions, Memory Model, Policy Engine, ZH-EN Language Module, 
@@ -23,7 +25,7 @@ Phase 0: Foundation & Architecture (Day 1)
  
 - [ ] 0.2.1 Define PolicyPriority enum (6 levels: FACTUAL_INTEGRITY → TARGET_FLUENCY) 
 - [ ] 0.2.2 Define Severity enum (BLOCKING, WARNING, INFO) 
-- [ ] 0.2.3 Define DocumentProfile (type, register, intent, audience) 
+- [ ] 0.2.3 Define DocumentProfile (type, register, intent, audience, evidence_style) — fields per TRA-ISA-REFERENCE.md §ANALYZE_DOCUMENT (evidence_style retained for spec fidelity even though TRA-SPECIFICATION.md §4 omits it) 
 - [ ] 0.2.4 Define StructuralNode & StructuralMap (AST representation: headings, lists, tables, code_blocks, links, anchors) 
 - [ ] 0.2.5 Define GlossaryEntry (source, target, status: canonical/context_sensitive, rule_id, confidence_note) 
 - [ ] 0.2.6 Define Entity (name, type: Product/API/CLI/Version/Acronym, mutable=false, context) 
@@ -166,10 +168,11 @@ Phase 3: Kernel, Policy Engine & Orchestration (Day 3-4)
     - Input: conflicting requirements (e.g., fluency vs terminology) 
     - Process: compare PolicyPriority enum values 
     - Output: decision + EvidenceRecord (POLICY_ARBITRATION) 
-- [ ] 3.2.2 Scope-aware priorities (from review-feedback.md): 
-    - Add scope_type to policy context (header_level, code_block_lang, list_nesting) 
-    - In code blocks: ENTITY_PRESERVATION > TERMINOLOGICAL_CONSISTENCY > FLUENCY 
-    - In headings: STRUCTURAL_INTEGRITY > all 
+- [ ] 3.2.2 Scope-aware applicability (from review-feedback.md): 
+    - Add scope_type to policy context (header_level, code_block_lang, list_nesting) to narrow *which segments* a rule applies to. 
+    - **Scope never reorders the immutable stack** (Factual Integrity #1 > Structural Integrity #2 > Entity Preservation #3 > Terminological Consistency #4 > Epistemic Fidelity #5 > Target Fluency #6). 
+    - In code blocks/comments: Factual and Entity binding always hold; Terminology preserved verbatim; Fluency is the only relaxable priority. 
+    - In headings: Factual and Structural both bind — if a heading contains a number/version, Factual wins over any Structural preference.
  
 ### 3.3 Pipeline Orchestration 
  
