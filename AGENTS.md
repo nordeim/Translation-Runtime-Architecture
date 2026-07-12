@@ -2,7 +2,7 @@
 
 ## What this repo is
 
-Specification-only repo. TRA = Translation Runtime Architecture v1.0 — normative spec for high-fidelity technical translation engines. The **five Spec files** are the normative product; meta-docs (`README.md`, `CLAUDE.md`, `start-here.md`), planning notes (`prototype.md`, `review-feedback.md`), and `to_translate.md` accompany them. **No source code, no build system, no test runner, no package manifest.** Any conformant engine lives in a separate repository.
+Specification-first repo. TRA = Translation Runtime Architecture v1.0 — normative spec for high-fidelity technical translation engines. The **five Spec files** are the normative product; meta-docs (`README.md`, `CLAUDE.md`, `start-here.md`), planning notes (`prototype.md`, `review-feedback.md`), and `to_translate.md` accompany them. **No build/test tooling applies to the specification documents themselves.** A Phase 0 prototype engine lives in `tra-prototype/` (a subdirectory, overriding the original "separate repository" boundary rule) and has its own `pyproject.toml`, `requirements.txt`, and `tests/` with `ruff`, `mypy --strict`, and `pytest`.
 
 ## Files and roles
 

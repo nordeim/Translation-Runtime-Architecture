@@ -1,4 +1,4 @@
-> **Repo scope note:** Per the repo's own boundary rule (see `README.md` / `AGENTS.md` / `CLAUDE.md`), any concrete engine claiming TRA compliance lives in a *separate* repository. This file is an **architectural critique of `prototype.md`** (an external `tra-prototype/` codebase) plus embedded design micro-docs. It is planning context for that external repo, not part of the normative spec, and is kept here only as planning context.
+> **Repo scope note:** The repo's original boundary rule put any concrete TRA-compliant engine in a *separate* repository (see `README.md` / `AGENTS.md` / `CLAUDE.md`). That was overridden: the `tra-prototype/` engine now lives as a subdirectory of this repo so the prototype and spec evolve together. This file remains an **architectural critique of `prototype.md`** plus embedded design micro-docs — planning context, not part of the normative spec.
 
 这份计划书扎实、专业且高度忠实于TRA规范，展现了极强的工程落地意识。你对Pydantic模型、不变式断言和ISA指令的拆解几乎无可挑剔。
 

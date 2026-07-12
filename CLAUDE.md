@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-This is a **specification repository**, not a code repository. TRA = **Translation Runtime Architecture** (v1.0), a normative design for high-fidelity technical translation engines (human-in-the-loop or automated). There is no source code, no build system, no test runner, and no package manifest. The **five Spec files** are the normative product; meta-docs (`README.md`, `AGENTS.md`, `start-here.md`), planning notes (`prototype.md`, `review-feedback.md`), and `to_translate.md` accompany them. Any conformant engine lives in a separate repository.
+This is primarily a **specification repository** — TRA = **Translation Runtime Architecture** (v1.0), a normative design for high-fidelity technical translation engines (human-in-the-loop or automated). The **five Spec files** are the normative product; meta-docs (`README.md`, `AGENTS.md`, `start-here.md`), planning notes (`prototype.md`, `review-feedback.md`), and `to_translate.md` accompany them.
 
-There are **no build / lint / test commands**. "Working" in this repo means authoring, refining, and cross-checking the specification documents. Use standard git for versioning (`git add`, `git commit`, `git log`). Any concrete engine, module, or tool that claims TRA compliance is out of scope of *this* repo — it would live elsewhere.
+A **Phase 0 prototype engine** now lives in `tra-prototype/` as a subdirectory of this repo (the original boundary rule put conformant engines in a separate repository; this was overridden so the prototype and spec evolve together). Treat `tra-prototype/` as the one code area here: it has its own `pyproject.toml`, `requirements.txt`, and `tests/`, and its own tooling — `ruff`, `mypy --strict`, and `pytest` run from inside that directory. The Spec files themselves remain the normative product and are never "built".
+
+There are **no build / lint / test commands for the specification documents**. "Working" in this repo means authoring, refining, and cross-checking the specification documents (use standard git for versioning). For the `tra-prototype/` engine, use its own toolchain (see `tra-prototype/pyproject.toml`).
 
 ## The mental model (requires reading multiple files)
 

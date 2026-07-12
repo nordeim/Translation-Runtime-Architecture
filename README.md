@@ -6,7 +6,9 @@ TRA defines the execution model, instruction set, state management, and conforma
 
 ## What This Is
 
-This is a **specification repository**, not a code repository. The five Spec files below are the normative product. Additional meta-docs (`README.md`, `AGENTS.md`, `CLAUDE.md`, `start-here.md`), planning notes (`prototype.md`, `review-feedback.md`), and `to_translate.md` accompany them. There is no source code, no build system, no test runner, and no package manifest — any conformant engine lives in a separate repository.
+This is primarily a **specification repository** — the five Spec files below are the normative product. Additional meta-docs (`README.md`, `AGENTS.md`, `CLAUDE.md`, `start-here.md`), planning notes (`prototype.md`, `review-feedback.md`), and `to_translate.md` accompany them.
+
+A **Phase 0 prototype engine** now lives in `tra-prototype/` as a subdirectory of this repo (the original boundary rule put conformant engines in a separate repository; this was overridden so the prototype and spec evolve together). The specification documents remain non-code; the `tra-prototype/` engine has its own `pyproject.toml`, `requirements.txt`, and `tests/`, and its own tooling (`ruff`, `mypy --strict`, `pytest`).
 
 ## Documents
 
