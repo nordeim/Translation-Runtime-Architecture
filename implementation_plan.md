@@ -59,22 +59,22 @@ Phase 1: Memory & Utilities — Structural Parsing (Day 1-2)
  
 ### 1.1 Markdown AST Parser with Anchor Resolution (from ANCHOR_RESOLUTION.md) 
  
-- [ ] 1.1.1 Integrate markdown-it-py with custom token traversal 
-- [ ] 1.1.2 Implement StructuralMapBuilder: 
+- [x] 1.1.1 Integrate markdown-it-py with custom token traversal 
+- [x] 1.1.2 Implement StructuralMapBuilder: 
     - Walk AST, produce StructuralNode tree preserving hierarchy 
     - Extract all headings → build AnchorRegistry (original_text → slug → placeholder __HEADER_N__) 
     - Extract all internal links (href starting with #) → register for rewrite pass 
     - Identify code blocks (fenced/inline) → mark as "no-translate" zones 
-- [ ] 1.1.3 Implement AnchorRegistry: 
+- [x] 1.1.3 Implement AnchorRegistry: 
     - register_heading(text) -> placeholder 
     - resolve_slug(translated_text, existing_slugs) -> new_slug (GitHub slugify + duplicate handling -1, -2) 
     - rewrite_links(ast) -> ast (post-translation pass) 
  
 ### 1.2 Entity Extraction 
  
-- [ ] 1.2.1 Regex-based extractor for: product names (PascalCase/camelCase), versions (v?\d+.\d+.\d+), CLI commands, APIs, acronyms 
-- [ ] 1.2.2 Heuristic: preserve tokens matching entity patterns in EntityTable 
-- [ ] 1.2.3 Ambiguity handling: default to Entity (immutable) per ENTITY_AMBIGUITY exception 
+- [x] 1.2.1 Regex-based extractor for: product names (PascalCase/camelCase), versions (v?\d+.\d+.\d+), CLI commands, APIs, acronyms 
+- [x] 1.2.2 Heuristic: preserve tokens matching entity patterns in EntityTable 
+- [x] 1.2.3 Ambiguity handling: default to Entity (immutable) per ENTITY_AMBIGUITY exception
  
 ### 1.3 Glossary Builder 
  
