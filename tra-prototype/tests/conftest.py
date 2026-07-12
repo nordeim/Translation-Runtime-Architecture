@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from tra.cache import CacheKeyContext
 from tra.config import BootstrapConfig
@@ -72,4 +74,5 @@ def sample_evidence(evidence_registry: EvidenceRegistry) -> EvidenceRecord:
 
 @pytest.fixture
 def config() -> BootstrapConfig:
-    return BootstrapConfig.from_yaml("config.yaml")
+    config_path = Path(__file__).resolve().parent.parent / "config.yaml"
+    return BootstrapConfig.from_yaml(str(config_path))

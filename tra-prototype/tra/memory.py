@@ -181,6 +181,30 @@ class RuntimeContext(BaseModel):
     structural_map: StructuralMap | None = None
     unresolved_ambiguities: list[str] = Field(default_factory=list)
     execution_log: list[str] = Field(default_factory=list)
+    repair_history: list[RepairAttempt] = Field(default_factory=list)
+
+
+class RepairAttempt(BaseModel):
+    """One surgical REPAIR_SEGMENT iteration (L4 forensic artifact, §6.4.2).
+
+    Recorded per attempt so a forensic review can reconstruct exactly which
+    decision was applied, in what order, and whether it resolved the violation.
+    """
+
+    segment_index: int = Field(..., description="Index of the repaired leaf segment")
+    attempt: int = Field(..., description="1-based retry count within the repair loop")
+    subsystem: str = Field(
+        ..., description="Diagnostic subsystem that triggered repair"
+    )
+    issue: str = Field(..., description="Human-readable diagnostic issue")
+    before: str = Field(..., description="Target text prior to this repair")
+    after: str = Field(..., description="Target text after this repair")
+    evidence_id: str | None = Field(
+        None, description="EvidenceRecord produced by repair"
+    )
+    resolved: bool = Field(
+        ..., description="True if re-verify reported zero BLOCKING for this segment"
+    )
 
 
 StructuralNode.model_rebuild()

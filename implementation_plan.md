@@ -251,36 +251,36 @@ Phase 6: Polish, Hardening & L4 Prep (Day 6-7)
  
 ### 6.1 Exception Handling (TRA-EXCEPTIONS) 
  
-- [ ] 6.1.1 Implement all 5 exception types with recovery procedures 
-- [ ] 6.1.2 UNKNOWN_TERM: log Warning, preserve source, add to ambiguities 
-- [ ] 6.1.3 BROKEN_MARKDOWN: best-effort parse, Blocking if critical hierarchy lost 
-- [ ] 6.1.4 CERTAINTY_CONFLICT: prioritize Epistemic Fidelity (Priority 5) 
-- [ ] 6.1.5 ENTITY_AMBIGUITY: default to Entity (immutable) 
-- [ ] 6.1.6 GLOSSARY_CONFLICT: Blocking, first occurrence canonical 
+- [x] 6.1.1 Implement all 5 exception types with recovery procedures 
+- [x] 6.1.2 UNKNOWN_TERM: log Warning, preserve source, add to ambiguities 
+- [x] 6.1.3 BROKEN_MARKDOWN: best-effort parse, Blocking if critical hierarchy lost 
+- [x] 6.1.4 CERTAINTY_CONFLICT: prioritize Epistemic Fidelity (Priority 5) 
+- [x] 6.1.5 ENTITY_AMBIGUITY: default to Entity (immutable) 
+- [x] 6.1.6 GLOSSARY_CONFLICT: Blocking, first occurrence canonical 
  
 ### 6.2 Human-in-the-Loop Hooks 
  
-- [ ] 6.2.1 --interactive flag: pause on RAISE_FLAG, show violation + context, accept/edit/skip 
-- [ ] 6.2.2 Ambiguity review UI (CLI-based): show source, glossary options, let user pick 
+- [x] 6.2.1 --interactive flag: pause on RAISE_FLAG, show violation + context, accept/edit/skip 
+- [x] 6.2.2 Ambiguity review UI (CLI-based): show source, glossary options, let user pick 
  
 ### 6.3 Logging & Visualization 
  
 - [ ] 6.3.1 Structured logging (structlog) with correlation IDs 
-- [ ] 6.3.2 State transition visualization (Mermaid diagram generation from execution_log) 
-- [ ] 6.3.3 Audit trace summary report (counts by severity, subsystem, instruction) 
+- [x] 6.3.2 State transition visualization (Mermaid diagram generation from execution_log) 
+- [x] 6.3.3 Audit trace summary report (counts by severity, subsystem, instruction) 
  
 ### 6.4 L4 Forensic Enhancements (Partial) 
  
-- [ ] 6.4.1 Line-by-line evidence tracing (map each output line → EvidenceRecord chain) 
-- [ ] 6.4.2 Repair history: track all REPAIR attempts per segment 
-- [ ] 6.4.3 Ambiguity register: explicit log of all unresolved ambiguities 
+- [x] 6.4.1 Line-by-line evidence tracing (map each output line → EvidenceRecord chain) 
+- [x] 6.4.2 Repair history: track all REPAIR attempts per segment 
+- [x] 6.4.3 Ambiguity register: explicit log of all unresolved ambiguities 
  
 ### 6.5 Performance & Robustness 
  
 - [ ] 6.5.1 Segment-level parallelism (asyncio for independent segments) 
 - [ ] 6.5.2 Glossary/entity caching across runs 
-- [ ] 6.5.3 Input validation & sanitization 
-- [ ] 6.5.4 Graceful degradation: rule-based fallback when LLM unavailable 
+- [x] 6.5.3 Input validation & sanitization 
+- [x] 6.5.4 Graceful degradation: rule-based fallback when LLM unavailable 
  
 ---
  

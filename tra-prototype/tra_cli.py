@@ -8,6 +8,7 @@ Subcommands:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
@@ -17,6 +18,7 @@ from tra.cache import TranslationCache
 from tra.config import BootstrapConfig
 from tra.diagnostics import AuditTrail
 from tra.memory import ConformanceLevel
+from tra.reporting import mermaid_state_diagram, summarize_audit
 from tra.validate import ValidationReport, validate_translation
 
 console = Console()
@@ -64,6 +66,12 @@ def cli(ctx: click.Context, config_path: str) -> None:
 @click.option("--lang", default=None, help="Language pair override, e.g. zh-en.")
 @click.option("--level", default=None, help="Conformance level, e.g. L3.")
 @click.option("--output", "-o", type=click.Path(path_type=Path), default=None)
+@click.option(
+    "--interactive",
+    is_flag=True,
+    default=False,
+    help="Pause for human review on UNRECOVERABLE (RAISE_FLAG) decisions.",
+)
 @click.pass_context
 def translate(
     ctx: click.Context,
@@ -71,6 +79,7 @@ def translate(
     lang: str | None,
     level: str | None,
     output: Path | None,
+    interactive: bool,
 ) -> None:
     """Translate INPUT_MD through the full TRA pipeline."""
     cfg = BootstrapConfig.from_yaml(ctx.obj["config_path"])
@@ -87,7 +96,7 @@ def translate(
 
     from tra.kernel import TRAKernel
 
-    kernel = TRAKernel(cfg)
+    kernel = TRAKernel(cfg, interactive=interactive)
     target = kernel.run(input_md)
 
     if output is None:
@@ -131,11 +140,18 @@ def cache_clear(ctx: click.Context, pattern: str | None) -> None:
     type=click.Choice(["summary", "json"]),
     default="summary",
 )
-def audit(trace: Path, fmt: str) -> None:
+@click.option(
+    "--report",
+    is_flag=True,
+    default=False,
+    help="Print the conformance summary + Mermaid state diagram.",
+)
+@click.pass_context
+def audit(ctx: click.Context, trace: Path, fmt: str, report: bool) -> None:
     """Summarize an audit_trace.jsonl file."""
     trail = AuditTrail(trace)
     records = trail.load()
-    if fmt == "json":
+    if fmt == "json" and not report:
         for rec in records:
             console.print_json(rec.model_dump_json())
         return
@@ -153,6 +169,29 @@ def audit(trace: Path, fmt: str) -> None:
         )
     console.print(table)
     console.print(f"[bold]{len(records)}[/bold] records")
+
+    if report:
+        summary = summarize_audit(trail)
+        console.print("\n[bold]Conformance summary[/bold]")
+        console.print(f"  total records: {summary['total']}")
+        console.print(f"  by severity:   {summary['by_severity']}")
+        console.print(f"  by instruction: {summary['by_instruction']}")
+        verdict = (
+            "[green]L3 CONFORMANT[/green]"
+            if summary["l3_conformant"]
+            else "[red]NON-CONFORMANT (BLOCKING raised)[/red]"
+        )
+        console.print(f"  verdict: {verdict}")
+        console.print("\n[bold]State-transition diagram[/bold]")
+        # Prefer the actual run path from execution_log.json if exported.
+        cfg = BootstrapConfig.from_yaml(ctx.obj["config_path"])
+        exec_log = Path(cfg.compilation_dir) / "execution_log.json"
+        log: list[str] = []
+        if exec_log.exists():
+            log = json.loads(exec_log.read_text(encoding="utf-8")).get(
+                "execution_log", []
+            )
+        console.print(mermaid_state_diagram(log))
 
 
 @cli.command(name="validate")

@@ -41,6 +41,7 @@ from .memory import (
     GlossaryEntry,
     GlossaryStatus,
     PolicyPriority,
+    RepairAttempt,
     RuntimeContext,
     Severity,
     StructuralMap,
@@ -161,11 +162,15 @@ def build_glossary(
     for src, tgt in mappings.items():
         if _MODULE.is_forbidden(src, tgt):
             raise GlossaryConflict(
-                f"CONFLICTING_MAPPINGS: {src!r} -> {tgt!r} is a known drift"
+                f"CONFLICTING_MAPPINGS: {src!r} -> {tgt!r} is a known drift",
+                term=src,
+                canonical_target="",
             )
         if src in seen and seen[src] != tgt:
             raise GlossaryConflict(
-                f"CONFLICTING_MAPPINGS: {src!r} maps to both {seen[src]!r} and {tgt!r}"
+                f"CONFLICTING_MAPPINGS: {src!r} maps to both {seen[src]!r} and {tgt!r}",
+                term=src,
+                canonical_target=seen[src],
             )
         seen[src] = tgt
         entry = GlossaryEntry(
@@ -305,8 +310,24 @@ def translate_segment(
         return cached
 
     if llm_translate is not None:
-        target = llm_translate(source_segment, ctx)
-        basis = "LLM decision"
+        try:
+            target = llm_translate(source_segment, ctx)
+            basis = "LLM decision"
+        except Exception as exc:  # noqa: BLE001 - graceful degradation (§6.5.4)
+            # LLM unavailable / errored: degrade to the deterministic rule
+            # path so translation still completes (never self-score, never
+            # raise). The rule path is weaker on fluency but preserves all
+            # BLOCKING invariants (factual / entity / terminology / epistemic).
+            target, basis = _rule_translate(source_segment, glossary, entities)
+            audit.append(
+                "TRANSLATE_SEGMENT",
+                _hash(source_segment),
+                [],
+                artifact_snapshot={
+                    "degraded": True,
+                    "reason": f"llm_unavailable: {exc!r}",
+                },
+            )
     else:
         target, basis = _rule_translate(source_segment, glossary, entities)
 
@@ -452,11 +473,15 @@ def repair_segment(
     *,
     attempt: int = 1,
     max_retries: int = 3,
+    segment_index: int = 0,
 ) -> str:
     """Surgically resolve a single diagnostic without new violations.
 
     Invariant: must not introduce new BLOCKING; must not violate a higher
     policy. UNRECOVERABLE if fixing would break a higher-priority invariant.
+
+    Records each attempt in `ctx.repair_history` for L4 forensic tracing
+    (§6.4.2) regardless of whether it resolved the violation.
     """
     glossary = {e.source: e.target for e in ctx.glossary_cache}
     repaired = target_segment
@@ -493,7 +518,7 @@ def repair_segment(
     if new_blocking and attempt >= max_retries:
         raise Unrecoverable("UNRECOVERABLE: repair introduces new BLOCKING violation")
 
-    evidence.add(
+    ev_id = evidence.add(
         EvidenceRecord(
             type=EvidenceType.POLICY_ARBITRATION,
             module="isa.repair_segment",
@@ -505,8 +530,20 @@ def repair_segment(
     audit.append(
         "REPAIR_SEGMENT",
         _hash(repaired),
-        [],
+        [ev_id],
         flags_raised=[diagnostic.severity.value],
+    )
+    ctx.repair_history.append(
+        RepairAttempt(
+            segment_index=segment_index,
+            attempt=attempt,
+            subsystem=diagnostic.subsystem,
+            issue=diagnostic.issue,
+            before=target_segment,
+            after=repaired,
+            evidence_id=ev_id,
+            resolved=not new_blocking,
+        )
     )
     return repaired
 

@@ -23,7 +23,8 @@ CASES_DIR = Path(__file__).parent / "benchmark" / "cases"
 
 
 def _cfg() -> BootstrapConfig:
-    return BootstrapConfig.from_yaml("config.yaml")
+    config_path = Path(__file__).resolve().parent.parent / "config.yaml"
+    return BootstrapConfig.from_yaml(str(config_path))
 
 
 def _all_cases() -> list[BenchmarkCase]:

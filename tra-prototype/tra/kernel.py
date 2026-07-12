@@ -10,6 +10,8 @@ instructions. The Kernel must not skip instructions.
 
 from __future__ import annotations
 
+import json
+import re
 from enum import StrEnum
 from pathlib import Path
 
@@ -31,8 +33,15 @@ from .isa import (
     translate_segment,
     verify_output,
 )
-from .memory import DocumentProfile, RuntimeContext, Severity, StructuralMap
+from .memory import (
+    ConformanceLevel,
+    DocumentProfile,
+    RuntimeContext,
+    Severity,
+    StructuralMap,
+)
 from .modules.zh_en import ZHENModule
+from .recovery import route_exception
 
 
 class KernelState(StrEnum):
@@ -63,11 +72,30 @@ _KERNEL_ORDER: list[KernelState] = [
 ]
 
 
+# Control characters that must never enter the pipeline (§6.5.3). Newlines,
+# tabs, and the common Unicode separators are preserved (markdown needs them);
+# null / C0 control / Unicode bidi overrides / BOM are stripped.
+_CONTROL_RE = re.compile(
+    "[" + "\x00-\x08\x0b\x0c\x0e-\x1f\x7f" + "\u202a-\u202e" + "\ufeff" + "]"
+)
+
+
+def _sanitize_input(text: str) -> str:
+    """Input validation & sanitization (Phase 6.5.3).
+
+    Strips control characters that could corrupt the markdown stream or
+    smuggle bidirectional-override attacks, without touching legitimate
+    whitespace. Pure: never raises; returns a safe copy.
+    """
+    return _CONTROL_RE.sub("", text)
+
+
 class TRAKernel:
     """Runs the full TRA pipeline on a source document."""
 
-    def __init__(self, config: BootstrapConfig) -> None:
+    def __init__(self, config: BootstrapConfig, *, interactive: bool = False) -> None:
         self.config = config
+        self.interactive = interactive
         self.cache = TranslationCache(
             config.cache_directory, enabled=config.cache_enabled
         )
@@ -94,6 +122,7 @@ class TRAKernel:
     def run(self, source: str | Path) -> str:
         """Execute the full pipeline; return the translated target markdown."""
         src = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
+        src = _sanitize_input(src)
 
         self._transition(KernelState.INITIALIZE_RUNTIME)
         self._transition(KernelState.ANALYZE_DOCUMENT)
@@ -104,7 +133,10 @@ class TRAKernel:
         smap: StructuralMap = self.ctx.structural_map
 
         self._transition(KernelState.BUILD_ARTIFACTS)
-        build_glossary(src, profile, self.ctx, self.evidence, self.audit)
+        try:
+            build_glossary(src, profile, self.ctx, self.evidence, self.audit)
+        except TRAException as exc:
+            self._recover(exc)
         build_entity_table(src, smap, self.ctx, self.evidence, self.audit)
 
         self._transition(KernelState.EXECUTE_TRANSLATION)
@@ -121,7 +153,30 @@ class TRAKernel:
 
         self._transition(KernelState.EMIT_PAYLOAD)
         self._export_artifacts()
+        self._export_forensics(target)
         return target
+
+    def _recover(self, exc: TRAException) -> None:
+        """EXCEPTION_HANDLER path: apply the spec-mandated recovery procedure
+        and record it on the audit trail + L4 ambiguity register.
+        """
+        report = route_exception(
+            exc,
+            self.ctx.unresolved_ambiguities,
+            canonical_target=getattr(exc, "canonical_target", ""),
+        )
+        self.audit.append(
+            "EXCEPTION_HANDLER",
+            report.code,
+            [],
+            artifact_snapshot={
+                "severity": report.severity.value,
+                "action": report.action.value,
+                "detail": report.detail,
+                "source_term": report.source_term,
+            },
+            flags_raised=[report.severity.value],
+        )
 
     # --- translation (segment-level, rule-based in Phase 2) -----------
 
@@ -155,6 +210,24 @@ class TRAKernel:
                 self.ctx.unresolved_ambiguities.append(
                     f"UNRECOVERABLE: {current.issue}"
                 )
+                self._recover(Unrecoverable(f"UNRECOVERABLE: {current.issue}"))
+                if self.interactive:
+                    # Pause for review; adopt the reviewer's resolution.
+                    from .hitl import format_unrecoverable, review_decision
+
+                    uncertainty, src_excerpt = format_unrecoverable(
+                        self.ctx, current, src
+                    )
+                    resolution, text = review_decision(
+                        uncertainty,
+                        src_excerpt,
+                        target,
+                        glossary_options=[e.source for e in self.ctx.glossary_cache],
+                    )
+                    target = text
+                    self.ctx.unresolved_ambiguities.append(
+                        f"HITL[{resolution}]: {current.issue}"
+                    )
                 break
             # Re-verify; collect any remaining violations.
             rediag = verify_output(target, src, self.ctx, self.audit)
@@ -171,6 +244,8 @@ class TRAKernel:
         entity_path = base / "entity_table.yaml"
         smap_path = base / "structural_map.json"
         style_path = base / "style_profile.yaml"
+        exec_log_path = base / "execution_log.json"
+        repair_path = base / "repair_history.jsonl"
 
         glossary_path.write_text(
             yaml.safe_dump(
@@ -199,5 +274,39 @@ class TRAKernel:
                 allow_unicode=True,
                 sort_keys=False,
             ),
+            encoding="utf-8",
+        )
+        exec_log_path.write_text(
+            json.dumps(
+                {
+                    "execution_log": self.ctx.execution_log,
+                    "unresolved_ambiguities": self.ctx.unresolved_ambiguities,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        with repair_path.open("w", encoding="utf-8") as fh:
+            for attempt in self.ctx.repair_history:
+                fh.write(attempt.model_dump_json() + "\n")
+
+    def _export_forensics(self, target: str) -> None:
+        """L4 forensic artifacts (§6.4): line-by-line evidence trace + the
+        explicit ambiguity register. Only emitted at L4_FORENSIC so L1-L3 runs
+        stay lean; the data is already captured in execution_log.json otherwise.
+        """
+        if self.config.conformance_level != ConformanceLevel.L4_FORENSIC:
+            return
+        from .reporting import line_by_line_trace
+
+        base = Path(self.config.compilation_dir)
+        base.mkdir(parents=True, exist_ok=True)
+        trace_path = base / "evidence_trace.jsonl"
+        with trace_path.open("w", encoding="utf-8") as fh:
+            for entry in line_by_line_trace(target, self.evidence):
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        ambiguity_path = base / "ambiguity_register.json"
+        ambiguity_path.write_text(
+            json.dumps(self.ctx.unresolved_ambiguities, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )

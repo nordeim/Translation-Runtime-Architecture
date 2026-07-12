@@ -10,7 +10,9 @@ from tra.kernel import KernelState, TRAKernel
 
 
 def _kernel(tmp_path: Path) -> TRAKernel:
-    cfg = BootstrapConfig.from_yaml("config.yaml")
+    # Resolve config.yaml relative to the repo so the suite is cwd-independent.
+    config_path = Path(__file__).resolve().parent.parent / "config.yaml"
+    cfg = BootstrapConfig.from_yaml(str(config_path))
     cfg.cache_directory = str(tmp_path / "cache")
     cfg.compilation_dir = str(tmp_path / "compilation_artifacts")
     cfg.audit_trace = str(tmp_path / "audit_trace.jsonl")
@@ -94,3 +96,23 @@ def test_kernel_audit_trail_on_disk(tmp_path: Path):
     assert trace.exists()
     lines = trace.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == len(k.audit._buffer)
+
+
+def test_kernel_records_exception_recovery(tmp_path: Path):
+    from tra import isa
+
+    # Force a GLOSSARY_CONFLICT during BUILD_GLOSSARY to exercise the
+    # EXCEPTION_HANDLER recovery path.
+    orig = isa._MODULE.get_glossary_mappings
+    isa._MODULE.get_glossary_mappings = lambda: {"成立": "Valid"}  # drift target
+    try:
+        k = _kernel(tmp_path)
+        k.run(EXAMPLE)
+    finally:
+        isa._MODULE.get_glossary_mappings = orig
+
+    instructions = {r.isa_instruction for r in k.audit._buffer}
+    assert "EXCEPTION_HANDLER" in instructions
+    rec = next(r for r in k.audit._buffer if r.isa_instruction == "EXCEPTION_HANDLER")
+    assert rec.artifact_snapshot.get("source_term") == "成立"
+    assert k.ctx.unresolved_ambiguities
