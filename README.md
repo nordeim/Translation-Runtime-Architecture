@@ -60,16 +60,58 @@ TRA models a translation engine as a virtual machine with an immutable core and 
 
 ## Working in This Repo
 
-There are **no build or test commands**. "Working" means authoring, refining, and cross-checking specification documents.
+For the **specification documents**, there are no build or test commands — "working" means authoring, refining, and cross-checking the spec. For the **`tra-prototype/` engine** (the one code area in this repo), use its own toolchain:
 
 ```bash
-# Versioning
+# Specification documents — versioning only
 git add .
 git commit -m "Description of change"
 git log --oneline
 ```
 
-Any concrete engine, module, or tool claiming TRA compliance lives in a separate repository.
+```bash
+# tra-prototype/ engine — run gates inside that directory
+cd tra-prototype
+ruff format . && ruff check . && mypy --strict tra && pytest tests
+```
+
+The `tra-prototype/` engine originally would have lived in a separate repository; that boundary was overridden so the prototype and spec evolve together (see note at the top of this README and `CLAUDE.md`).
+
+## Prototype Engine (`tra-prototype/`)
+
+A TRA v1.0-conformant translation engine implementing the immutable core (Kernel + 6 ISA instructions + Policy Engine + Memory Model) with the ZH↔EN Language Module plugged in.
+
+**Capabilities**
+
+- Deterministic, cache-first ZH→EN pipeline: glossary + entity + epistemic substitution over an analyzable markdown structure.
+- Conformance levels **L1 → L4**; the spec's canonical terminology and entities are preserved exactly (e.g. `成立 → Confirmed`, never "Valid").
+- **L3 gate**: `VERIFY_OUTPUT` must raise zero `BLOCKING` diagnostics; `validate` enforces this out of band.
+- **L4 forensics** (gated on `L4_FORENSIC`): line-by-line `evidence_trace.jsonl` + explicit `ambiguity_register.json`.
+- **Human-in-the-loop**: `--interactive` pauses the repair loop on `UNRECOVERABLE` for accept / override / skip.
+- **Graceful degradation**: if an LLM seam is supplied and raises, the engine falls back to the deterministic rule path rather than failing.
+- **LLM-optional**: runs end-to-end with no LLM (rule path), or with a caller-supplied `llm_translate` callback.
+
+**CLI**
+
+```bash
+cd tra-prototype
+
+# Translate a markdown document through the full pipeline.
+python -m tra_cli translate doc.md --level L3 -o doc.en.md
+
+# Standalone conformance gate: does OUTPUT meet the LEVEL? (zero BLOCKING → PASS)
+python -m tra_cli validate doc.md doc.en.md --level L3
+
+# Summarize an audit trace; --report adds the conformance summary + state diagram.
+python -m tra_cli audit ./audit_trace.jsonl --report
+
+# Invalidate deterministic-cache entries.
+python -m tra_cli cache-clear
+```
+
+**Status**
+
+Phases 0–6 are complete (foundation → Kernel/Policy orchestration → ZH-EN module → CLI + benchmark suite → hardening). Phase 7 (documentation & delivery) has not started. See `tra-prototype/implementation_plan.md` for the item-by-item state and `CLAUDE.md` → "Prototype engine status" for layout and run commands.
 
 ## Invariants
 
@@ -92,4 +134,9 @@ If authoring or reviewing an engine against TRA (Conformance Guide L3 checklist)
 
 ## Contributing
 
-This is a specification repository. Contributions are limited to authoring, refining, and cross-checking the spec documents. See `CLAUDE.md` for architectural context and `AGENTS.md` for agent-specific guidance.
+Two kinds of contribution are welcome:
+
+- **Specification documents** — authoring, refining, and cross-checking the spec files (the normative product).
+- **`tra-prototype/` engine** — code and tests that advance the prototype against `implementation_plan.md`, keeping every gate green (`ruff`, `ruff format`, `mypy --strict`, `pytest`). New language/domain/formatting behavior goes through the module registry, never by editing the Kernel or ISA.
+
+See `CLAUDE.md` for architectural context and `AGENTS.md` for agent-specific guidance.

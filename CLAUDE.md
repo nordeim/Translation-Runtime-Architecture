@@ -10,6 +10,41 @@ A **Phase 0 prototype engine** now lives in `tra-prototype/` as a subdirectory o
 
 There are **no build / lint / test commands for the specification documents**. "Working" in this repo means authoring, refining, and cross-checking the specification documents (use standard git for versioning). For the `tra-prototype/` engine, use its own toolchain (see `tra-prototype/pyproject.toml`).
 
+## Prototype engine status (`tra-prototype/`)
+
+**Status (as of the current HEAD):** Phases 0–6 are complete — foundation (Phase 0), structural parsing/anchor resolution (Phase 1), the six ISA instructions (Phase 2), Kernel + Policy Engine orchestration (Phase 3), ZH-EN Language Module integration (Phase 4), CLI + artifacts + benchmark suite + L3 `validate` gate (Phase 5), and hardening: TRA-EXCEPTION recovery, human-in-the-loop hooks, L4 forensic artifacts, input sanitization, and LLM graceful degradation (Phase 6). **Phase 7 (documentation & delivery) has not started.** The full per-item state lives in `implementation_plan.md`; open items are 6.3.1 (structlog), 6.5.1 (asyncio parallelism), 6.5.2 (cross-run disk caching), and all of Phase 7.
+
+**Layout (where behavior lives):**
+
+- `kernel.py` — the immutable 9-state sequential machine (`BOOTSTRAP → … → EMIT_PAYLOAD`); transitions only on successful ISA completion.
+- `isa.py` — the six ISA instructions (`ANALYZE_DOCUMENT`, `BUILD_GLOSSARY`, `BUILD_ENTITY_TABLE`, `TRANSLATE_SEGMENT`, `VERIFY_OUTPUT`, `REPAIR_SEGMENT`), each with a strict Inputs/Preconditions/Outputs/Invariants/Failure contract.
+- `memory.py` — `RuntimeContext` (Pydantic) + the immutable-segment model.
+- `policy.py` — the `PolicyResolver` over the non-negotiable 6-priority stack.
+- `cache.py` — deterministic `TranslationCache` (SHA-256 over canonical context; cache-first in `TRANSLATE_SEGMENT`).
+- `diagnostics.py` — append-only `AuditTrail` + `EvidenceRegistry`.
+- `anchor.py` / `utils.py` — markdown structural parsing + entity extraction.
+- `recovery.py` — maps the 5 `TRA-EXCEPTION` types to spec-mandated recoveries.
+- `hitl.py` — interactive review hooks (`--interactive` CLI flag).
+- `reporting.py` — audit summary, Mermaid state diagram, L4 line-by-line trace.
+- `validate.py` — standalone L3/L4 pass-gate verifier.
+- `benchmark.py` + `tests/benchmark/cases/*.jsonl` — declarative S/F/T/D/E/R cases; L3 gate = zero `BLOCKING`.
+- `modules/{registry,base,zh_en}.py` — the plug-in registry and the bundled ZH↔EN module.
+
+**Run / test from inside `tra-prototype/`:**
+
+```bash
+cd tra-prototype
+ruff format . && ruff check . && mypy --strict tra && pytest tests
+```
+
+**Extension rule (reinforces the §9 note):** new language bridges (e.g. `fr-en`) register through `build_default_registry()` in `modules/registry.py` as a `ModuleInterface`. They must not touch the Kernel or ISA — that separation is load-bearing.
+
+**Known gaps (honest, not yet addressed):**
+
+- `structlog` is a listed dependency but the engine uses the plain `AuditTrail` (no structured/correlation-ID logging — 6.3.1 open).
+- No `asyncio` segment-level parallelism (6.5.1 open).
+- Glossary/entity tables are rebuilt per run; only the translation output is cached across runs via diskcache (6.5.2 open).
+
 ## The mental model (requires reading multiple files)
 
 TRA is best understood as a virtual machine with an immutable core and plug-in extensions:
