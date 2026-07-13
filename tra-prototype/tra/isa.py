@@ -90,11 +90,15 @@ def analyze_document(
         raise TRAException("EMPTY_SOURCE: document contains no translatable content")
 
     try:
-        structural_map, _registry = build_structural_map(source)
+        structural_map, registry = build_structural_map(source)
     except Exception as exc:  # noqa: BLE001 - surface as spec failure
         raise BrokenMarkdown(
             f"MALFORMED_MARKDOWN: unable to parse structure ({exc})"
         ) from exc
+
+    # TRA-008: preserve the AnchorRegistry on ctx so the kernel can call
+    # rewrite_links after translation to repoint internal links (S-06).
+    ctx.anchor_registry = registry
 
     # DocumentProfile: heuristic detection (Spec §4 / ISA contract).
     doc_type = _detect_document_type(source)

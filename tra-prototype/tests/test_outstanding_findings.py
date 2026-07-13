@@ -593,3 +593,52 @@ class TestTRA002RegistryWiring:
             "kernel did not use the stub module's glossary — "
             "registry not wired (TRA-002)"
         )
+
+
+# =========================================================================
+# TRA-008 — rewrite_links wired into kernel (internal links rewritten)
+# =========================================================================
+
+
+class TestTRA008RewriteLinks:
+    """TRA-008: the kernel must call rewrite_links after translation so
+    internal `[text](#slug)` links are repointed at the translated heading
+    slugs. Currently rewrite_links is defined but never called in production.
+    """
+
+    def test_internal_links_rewritten_after_translation(self, tmp_path: Path) -> None:
+        """Source has a heading + an internal link to that heading. After
+        translation, the link target must be rewritten to the translated
+        heading's slug (a valid slug: lowercase, hyphens, no spaces)."""
+        import re
+
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        # Source: heading "系统成立" + link to "#系统成立"
+        source = "# 系统成立\n\n[link to heading](#系统成立)\n"
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L1_BASIC,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        target = kernel.run(source)
+        # Extract the link target from the translated output.
+        link_match = re.search(r"\]\(#([^)]+)\)", target)
+        assert link_match, f"no internal link found in target: {target!r}"
+        link_target = link_match.group(1)
+        # The link target must be a valid slug: no spaces, no uppercase
+        # (GitHub slugify: lowercase, spaces -> '-'). Without rewrite_links,
+        # the target is "The system is Confirmed" (spaces, uppercase) — broken.
+        assert " " not in link_target, (
+            f"link target {link_target!r} has spaces — not a valid slug; "
+            "rewrite_links not called (TRA-008)"
+        )

@@ -76,3 +76,24 @@ def sample_evidence(evidence_registry: EvidenceRegistry) -> EvidenceRecord:
 def config() -> BootstrapConfig:
     config_path = Path(__file__).resolve().parent.parent / "config.yaml"
     return BootstrapConfig.from_yaml(str(config_path))
+
+
+@pytest.fixture
+def kernel_config(tmp_path: Path) -> BootstrapConfig:
+    """A BootstrapConfig wired to tmp_path for kernel tests (TRA-034).
+
+    Eliminates the duplicated config-loading + path-override boilerplate
+    that was copy-pasted across test_kernel.py, test_phase6_hardening.py,
+    test_benchmark.py, and test_outstanding_findings.py. Sets base_dir=tmp_path
+    so the path-safety validator (TRA-014) accepts the absolute tmp paths.
+    """
+    config_path = Path(__file__).resolve().parent.parent / "config.yaml"
+    cfg = BootstrapConfig.from_yaml(str(config_path))
+    return cfg.model_copy(
+        update={
+            "base_dir": str(tmp_path),
+            "cache_directory": str(tmp_path / "cache"),
+            "compilation_dir": str(tmp_path / "compilation_artifacts"),
+            "audit_trace": str(tmp_path / "audit_trace.jsonl"),
+        }
+    )

@@ -205,6 +205,10 @@ class RuntimeContext(BaseModel):
     # get_glossary_mappings, get_style_profile, is_forbidden,
     # get_forbidden_targets, entity_type_hint, apply_zh_rules, apply_rules.
     module: Any = Field(default=None, exclude=True)
+    # The AnchorRegistry from ANALYZE_DOCUMENT (TRA-008). Preserved so the
+    # kernel can call rewrite_links after translation to repoint internal
+    # `[text](#slug)` links at the translated heading slugs (S-06).
+    anchor_registry: Any = Field(default=None, exclude=True)
 
 
 class RepairAttempt(BaseModel):

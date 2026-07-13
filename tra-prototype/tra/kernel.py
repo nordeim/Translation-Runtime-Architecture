@@ -11,6 +11,7 @@ instructions. The Kernel must not skip instructions.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -262,10 +263,74 @@ class TRAKernel:
         self._transition(KernelState.AUDIT_DIAGNOSTICS)
         self.audit.flush()
 
+        # TRA-008: rewrite internal `[text](#slug)` links to point at the
+        # translated heading slugs (S-06). Done after AUDIT_DIAGNOSTICS so
+        # the verify gate sees the pre-rewrite target (link integrity is a
+        # post-translation structural concern, not a terminology concern).
+        target = self._rewrite_anchors(target)
+
         self._transition(KernelState.EMIT_PAYLOAD)
         self._export_artifacts()
         self._export_forensics(target)
         return target
+
+    def _rewrite_anchors(self, target: str) -> str:
+        """Rewrite internal links to point at translated heading slugs (TRA-008).
+
+        Two-pass approach for the whole-doc translation model (TRA-001 not yet
+        implemented):
+        1. Normalize any translated link targets that have spaces (the whole-doc
+           translator mangles `#slug` into `#Translated Text With Spaces`).
+           Slugify them so they're valid URL fragments.
+        2. Bind translated heading slugs on the AnchorRegistry and call
+           rewrite_links to repoint links at the canonical translated slugs.
+        """
+        if self.ctx.anchor_registry is None or self.ctx.structural_map is None:
+            return target
+        from .anchor import generate_github_slug, rewrite_links
+
+        registry = self.ctx.anchor_registry
+
+        # Pass 1: normalize translated link targets with spaces.
+        # The whole-doc translator turns `#系统成立` into `#The system is Confirmed`
+        # (spaces, uppercase). Slugify the target so it's a valid URL fragment.
+        _LINK_WITH_SPACES_RE = re.compile(r"\]\(#([^)]+)\)")
+
+        def _slugify_link(m: re.Match[str]) -> str:
+            slug_text = m.group(1)
+            if " " in slug_text or slug_text != slug_text.lower():
+                return f"](#{generate_github_slug(slug_text)})"
+            return m.group(0)
+
+        target = _LINK_WITH_SPACES_RE.sub(_slugify_link, target)
+
+        # Pass 2: bind translated heading slugs and call rewrite_links.
+        source_headings: list[str] = []
+
+        def _collect_headings(nodes: list[Any]) -> None:
+            for node in nodes:
+                if node.kind.value == "heading" and node.text:
+                    source_headings.append(node.text)
+                _collect_headings(node.children)
+
+        _collect_headings(self.ctx.structural_map.nodes)
+        if source_headings:
+            target_heading_re = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+            target_headings = [
+                m.group(2).strip() for m in target_heading_re.finditer(target)
+            ]
+            for src_heading, tgt_heading in zip(
+                source_headings, target_headings, strict=False
+            ):
+                src_slug = generate_github_slug(src_heading)
+                placeholder = registry.map_original_slug_to_placeholder.get(src_slug)
+                if placeholder is not None:
+                    translated_slug = registry.resolve_slug(tgt_heading)
+                    registry.bind(placeholder, translated_slug)
+        rewritten, broken = rewrite_links(target, registry)
+        for slug in broken:
+            self.ctx.unresolved_ambiguities.append(f"BROKEN_LINK: #{slug}")
+        return rewritten
 
     def _recover(self, exc: TRAException) -> None:
         """EXCEPTION_HANDLER path: apply the spec-mandated recovery procedure
