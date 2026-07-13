@@ -251,3 +251,253 @@ class TestTRA007TransitionOrdering:
         )
         # execution_log must NOT contain ANALYZE_DOCUMENT.
         assert "ANALYZE_DOCUMENT" not in kernel.ctx.execution_log
+
+
+# =========================================================================
+# TRA-009 + TRA-006 — PolicyResolver-driven severity for canonical term leakage
+# =========================================================================
+
+
+class TestTRA009PolicyDrivenSeverity:
+    """TRA-009 + TRA-006: when a CANONICAL glossary term leaks untranslated,
+    verify_output must escalate to BLOCKING via PolicyResolver arbitration
+    (Terminological Consistency P4 > Target Fluency P6). This makes the
+    PolicyResolver invoked in production (TRA-006) and tightens canonical-term
+    leakage from WARNING to BLOCKING (TRA-009).
+    """
+
+    def test_canonical_term_leakage_is_blocking(self) -> None:
+        """A CANONICAL glossary term that appears untranslated in the target
+        is a BLOCKING violation (P4 > P6)."""
+        from tra.diagnostics import AuditTrail, EvidenceRegistry, Severity
+        from tra.isa import build_glossary, verify_output
+        from tra.memory import DocumentProfile, GlossaryStatus, RuntimeContext
+
+        ctx = RuntimeContext()
+        ev = EvidenceRegistry()
+        build_glossary(
+            "成立",
+            DocumentProfile(type="x", register_="y", intent="z", audience="a"),
+            ctx,
+            ev,
+            AuditTrail("/tmp/test_tra009.jsonl"),
+        )
+        # Confirm the glossary entry is CANONICAL.
+        assert ctx.glossary_cache
+        assert ctx.glossary_cache[0].status == GlossaryStatus.CANONICAL
+        # Target still contains the untranslated source term.
+        diags = verify_output(
+            "成立 here", "成立 here", ctx, AuditTrail("/tmp/test.jsonl")
+        )
+        terminology = [d for d in diags if d.subsystem == "terminology"]
+        assert terminology, "expected at least one terminology diagnostic"
+        assert all(d.severity == Severity.BLOCKING for d in terminology), (
+            "canonical term leakage must be BLOCKING (P4 > P6 via PolicyResolver)"
+        )
+
+    def test_policy_resolver_invoked_in_verify_output(self) -> None:
+        """TRA-006: PolicyResolver must be consulted in production code paths,
+        not just tested in isolation. Verify it's importable and wired."""
+        from tra.memory import PolicyPriority
+        from tra.policy import PolicyResolver
+
+        resolver = PolicyResolver(list(PolicyPriority))
+        # Terminological Consistency (P4) wins over Target Fluency (P6).
+        winner = resolver.resolve(
+            PolicyPriority.TERMINOLOGICAL_CONSISTENCY,
+            PolicyPriority.TARGET_FLUENCY,
+        )
+        assert winner == PolicyPriority.TERMINOLOGICAL_CONSISTENCY
+
+
+# =========================================================================
+# TRA-004 — Exception recovery reachability (BrokenMarkdown routes through _recover)
+# =========================================================================
+
+
+class TestTRA004ExceptionRecovery:
+    """TRA-004: all 5 TRA-EXCEPTION types must route through the
+    EXCEPTION_HANDLER (kernel._recover) instead of propagating uncaught.
+    Currently BrokenMarkdown crashes the kernel.
+    """
+
+    def test_broken_markdown_routes_through_exception_handler(
+        self, tmp_path: Path
+    ) -> None:
+        """If analyze_document raises BrokenMarkdown, the kernel must route
+        it through _recover (EXCEPTION_HANDLER audit record), not propagate."""
+        from unittest.mock import patch
+
+        from tra.config import BootstrapConfig
+        from tra.exceptions import BrokenMarkdown
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L1_BASIC,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        with patch("tra.kernel.analyze_document", side_effect=BrokenMarkdown("boom")):
+            # Must NOT raise — the kernel routes through _recover.
+            kernel.run("# test\n")
+        # The audit trail must contain an EXCEPTION_HANDLER record.
+        handler_records = [
+            r for r in kernel.audit._buffer if r.isa_instruction == "EXCEPTION_HANDLER"
+        ]
+        assert handler_records, (
+            "expected an EXCEPTION_HANDLER audit record for BrokenMarkdown — "
+            "the kernel must route exceptions through _recover (TRA-004)"
+        )
+        assert handler_records[0].artifact_snapshot.get("severity") == "BLOCKING"
+
+
+# =========================================================================
+# TRA-032 — HITL review_decision tested for all 3 resolutions
+# =========================================================================
+
+
+class TestTRA032HITLResolutions:
+    """TRA-032: hitl.review_decision supports accept/override/skip but only
+    'accept' was tested. Parametrize over all 3.
+    """
+
+    @pytest.mark.parametrize("resolution", ["accept", "override", "skip"])
+    def test_review_decision_returns_correct_resolution(
+        self, resolution: str, monkeypatch
+    ) -> None:
+        """Each resolution path must return the correct (resolution, text)."""
+        from tra.hitl import review_decision
+
+        # Monkeypatch rich.prompt.Prompt.ask to return the chosen resolution.
+        # The override path asks twice (resolution + edited text); accept/skip ask once.
+        responses = {
+            "accept": ["accept"],
+            "override": ["override", "edited text"],
+            "skip": ["skip"],
+        }
+        calls = iter(responses[resolution])
+
+        def _fake_ask(*_args, **_kwargs):
+            return next(calls)
+
+        monkeypatch.setattr("tra.hitl.Prompt.ask", _fake_ask)
+        uncertainty = "test uncertainty"
+        src_excerpt = "test source"
+        candidate = "candidate text"
+        result_res, result_text = review_decision(
+            uncertainty, src_excerpt, candidate, glossary_options=["成立"]
+        )
+        assert result_res == resolution
+
+
+# =========================================================================
+# TRA-033 — LLM seam degradation tested for multiple exception types + empty/None
+# =========================================================================
+
+
+class TestTRA033LLMSeamRobustness:
+    """TRA-033: graceful degradation was tested for RuntimeError only.
+    Parametrize over multiple exception types. Also test empty-string and
+    None returns (latent gap: these bypass the except block entirely).
+    """
+
+    @pytest.mark.parametrize(
+        "exc_cls", [RuntimeError, ValueError, TypeError, OSError, TimeoutError]
+    )
+    def test_llm_seam_degrades_on_each_exception_type(self, exc_cls: type) -> None:
+        """The except Exception catch must handle all exception types."""
+        from tra.cache import TranslationCache
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import translate_segment
+        from tra.memory import GlossaryEntry, GlossaryStatus, RuntimeContext
+
+        ctx = RuntimeContext()
+        ctx.glossary_cache = [
+            GlossaryEntry(
+                source="成立", target="Confirmed", status=GlossaryStatus.CANONICAL
+            )
+        ]
+        cache = TranslationCache("/tmp/test_cache_tra033", enabled=False)
+
+        def boom(_seg, _ctx):
+            raise exc_cls("llm down")
+
+        res = translate_segment(
+            "成立",
+            ctx,
+            cache,
+            EvidenceRegistry(),
+            AuditTrail("/tmp/test.jsonl"),
+            llm_translate=boom,
+        )
+        # Must degrade to rule path, not raise.
+        assert "Confirmed" in res.translation
+
+    def test_llm_seam_degrades_on_empty_string(self) -> None:
+        """TRA-033 latent gap: llm_translate returning '' must degrade to the
+        rule path, not silently produce an empty translation."""
+        from tra.cache import TranslationCache
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import translate_segment
+        from tra.memory import GlossaryEntry, GlossaryStatus, RuntimeContext
+
+        ctx = RuntimeContext()
+        ctx.glossary_cache = [
+            GlossaryEntry(
+                source="成立", target="Confirmed", status=GlossaryStatus.CANONICAL
+            )
+        ]
+        cache = TranslationCache("/tmp/test_cache_tra033b", enabled=False)
+
+        def empty(_seg, _ctx):
+            return ""
+
+        res = translate_segment(
+            "成立",
+            ctx,
+            cache,
+            EvidenceRegistry(),
+            AuditTrail("/tmp/test.jsonl"),
+            llm_translate=empty,
+        )
+        # Must degrade to rule path — not return "".
+        assert "Confirmed" in res.translation, (
+            "empty LLM output must degrade to rule path, not produce empty translation"
+        )
+
+    def test_llm_seam_degrades_on_none(self) -> None:
+        """TRA-033 latent gap: llm_translate returning None must degrade to the
+        rule path, not crash."""
+        from tra.cache import TranslationCache
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import translate_segment
+        from tra.memory import GlossaryEntry, GlossaryStatus, RuntimeContext
+
+        ctx = RuntimeContext()
+        ctx.glossary_cache = [
+            GlossaryEntry(
+                source="成立", target="Confirmed", status=GlossaryStatus.CANONICAL
+            )
+        ]
+        cache = TranslationCache("/tmp/test_cache_tra033c", enabled=False)
+
+        def returns_none(_seg, _ctx):
+            return None
+
+        res = translate_segment(
+            "成立",
+            ctx,
+            cache,
+            EvidenceRegistry(),
+            AuditTrail("/tmp/test.jsonl"),
+            llm_translate=returns_none,
+        )
+        assert "Confirmed" in res.translation

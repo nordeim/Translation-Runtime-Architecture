@@ -332,10 +332,11 @@ def test_verify_output_ignores_confidence_note():
 # --- TRA-030: severity classification is part of the spec contract -----
 
 
-def test_verify_output_terminology_is_warning_not_blocking():
-    """TRA-030: untranslated source terms are WARNING (Priority 4), not
-    BLOCKING. A mutation escalating terminology to BLOCKING would silently
-    make the L3 gate stricter than the spec intends.
+def test_verify_output_terminology_canonical_is_blocking():
+    """TRA-009 + TRA-030: untranslated CANONICAL source terms are BLOCKING
+    (Terminological Consistency P4 > Target Fluency P6, via PolicyResolver).
+    A mutation demoting canonical terminology to WARNING would silently make
+    the L3 gate more permissive than the policy stack allows.
     """
     ctx = _ctx()
     ev = EvidenceRegistry()
@@ -346,12 +347,11 @@ def test_verify_output_terminology_is_warning_not_blocking():
         ev,
         _audit(),
     )
-    # Target still contains the untranslated source term "成立".
+    # Target still contains the untranslated CANONICAL source term "成立".
     diags = verify_output("成立 here", "成立 here", ctx, _audit())
     terminology = [d for d in diags if d.subsystem == "terminology"]
     assert terminology, "expected at least one terminology diagnostic"
-    assert all(d.severity == Severity.WARNING for d in terminology)
-    assert not any(d.severity == Severity.BLOCKING for d in terminology)
+    assert all(d.severity == Severity.BLOCKING for d in terminology)
 
 
 def test_verify_output_structural_mismatch_is_blocking():

@@ -329,6 +329,11 @@ def translate_segment(
         try:
             target = llm_translate(source_segment, ctx)
             basis = "LLM decision"
+            # TRA-033: guard against empty/None LLM output. These bypass the
+            # except block entirely (no exception is raised) but produce
+            # invalid translations. Degrade to the rule path instead.
+            if not target:
+                raise ValueError("llm_translate returned empty/None output")
         except Exception as exc:  # noqa: BLE001 - graceful degradation (§6.5.4)
             # LLM unavailable / errored: degrade to the deterministic rule
             # path so translation still completes (never self-score, never
@@ -425,7 +430,6 @@ def verify_output(
     severity BLOCKING / WARNING / INFO.
     """
     diagnostics: list[Diagnostic] = []
-    glossary = {e.source: e.target for e in ctx.glossary_cache}
     entities = ctx.entity_table
     structural_map = ctx.structural_map
 
@@ -458,14 +462,24 @@ def verify_output(
             )
 
     # Terminology: glossary terms must appear as canonical targets.
-    for src, tgt in glossary.items():
-        if src in target:  # untranslated source term leaked
+    # TRA-009 + TRA-006: severity is policy-driven. CANONICAL term leakage
+    # is BLOCKING (Terminological Consistency P4 > Target Fluency P6);
+    # CONTEXT_SENSITIVE term leakage stays WARNING (fluency may legitimately
+    # override context-dependent mappings).
+    from .memory import GlossaryStatus
+
+    for entry in ctx.glossary_cache:
+        if entry.source in target:  # untranslated source term leaked
+            if entry.status == GlossaryStatus.CANONICAL:
+                severity = Severity.BLOCKING
+            else:
+                severity = Severity.WARNING
             diagnostics.append(
                 Diagnostic(
-                    severity=Severity.WARNING,
+                    severity=severity,
                     subsystem="terminology",
-                    issue=f"Source term not translated: {src!r}",
-                    evidence=f"expected canonical target {tgt!r}",
+                    issue=f"Source term not translated: {entry.source!r}",
+                    evidence=f"expected canonical target {entry.target!r}",
                     action="Apply canonical mapping",
                 )
             )

@@ -15,43 +15,43 @@ Phase 0: Foundation & Architecture (Day 1)
  
 ### 0.1 Project Setup 
  
-- [ ] 0.1.1 Initialize tra-prototype/ repo with pyproject.toml, requirements.txt, virtualenv 
-- [ ] 0.1.2 Configure linting (ruff), formatting (black), type checking (mypy strict), testing (pytest) 
-- [ ] 0.1.3 Create directory structure per prototype.md 
-- [ ] 0.1.4 Add config.yaml schema for tvm_bootstrap (language_pair, domain, conformance_level, model_endpoint, model_version) 
-- [ ] 0.1.5 Set up CLI entry point skeleton (tra_cli.py with translate, cache-clear, audit subcommands) 
+- [x] 0.1.1 Initialize tra-prototype/ repo with pyproject.toml, requirements.txt, virtualenv 
+- [x] 0.1.2 Configure linting (ruff), formatting (black), type checking (mypy strict), testing (pytest) 
+- [x] 0.1.3 Create directory structure per prototype.md 
+- [x] 0.1.4 Add config.yaml schema for tvm_bootstrap (language_pair, domain, conformance_level, model_endpoint, model_version) 
+- [x] 0.1.5 Set up CLI entry point skeleton (tra_cli.py with translate, cache-clear, audit subcommands) 
  
 ### 0.2 Core Data Models (Pydantic v2) — Critical Path 
  
-- [ ] 0.2.1 Define PolicyPriority enum (6 levels: FACTUAL_INTEGRITY → TARGET_FLUENCY) 
-- [ ] 0.2.2 Define Severity enum (BLOCKING, WARNING, INFO) 
-- [ ] 0.2.3 Define DocumentProfile (type, register, intent, audience, evidence_style) — fields per TRA-ISA-REFERENCE.md §ANALYZE_DOCUMENT (evidence_style retained for spec fidelity even though TRA-SPECIFICATION.md §4 omits it) 
-- [ ] 0.2.4 Define StructuralNode & StructuralMap (AST representation: headings, lists, tables, code_blocks, links, anchors) 
-- [ ] 0.2.5 Define GlossaryEntry (source, target, status: canonical/context_sensitive, rule_id, confidence_note) 
-- [ ] 0.2.6 Define Entity (name, type: Product/API/CLI/Version/Acronym, mutable=false, context) 
-- [ ] 0.2.7 Define StyleProfile (voice, sentence_complexity, epistemic_mapping, punctuation_rules) 
-- [ ] 0.2.8 Define RuntimeContext (config, document_profile, glossary_cache, entity_table, style_profile, unresolved_ambiguities, execution_log) 
+- [x] 0.2.1 Define PolicyPriority enum (6 levels: FACTUAL_INTEGRITY → TARGET_FLUENCY) 
+- [x] 0.2.2 Define Severity enum (BLOCKING, WARNING, INFO) 
+- [x] 0.2.3 Define DocumentProfile (type, register, intent, audience, evidence_style) — fields per TRA-ISA-REFERENCE.md §ANALYZE_DOCUMENT (evidence_style retained for spec fidelity even though TRA-SPECIFICATION.md §4 omits it) 
+- [x] 0.2.4 Define StructuralNode & StructuralMap (AST representation: headings, lists, tables, code_blocks, links, anchors) 
+- [x] 0.2.5 Define GlossaryEntry (source, target, status: canonical/context_sensitive, rule_id, confidence_note) 
+- [x] 0.2.6 Define Entity (name, type: Product/API/CLI/Version/Acronym, mutable=false, context) 
+- [x] 0.2.7 Define StyleProfile (voice, sentence_complexity, epistemic_mapping, punctuation_rules) 
+- [x] 0.2.8 Define RuntimeContext (config, document_profile, glossary_cache, entity_table, style_profile, unresolved_ambiguities, execution_log) 
  
 ### 0.3 Evidence Schema (from EVIDENCE_SCHEMA.md) — Critical for L3 
  
-- [ ] 0.3.1 Define EvidenceType enum (TERM_MATCH, ENTITY_PRESERVED, POLICY_ARBITRATION, STRUCTURAL_MAPPING, LLM_DECISION, HUMAN_OVERRIDE, CONTEXTUAL_INFERENCE) 
-- [ ] 0.3.2 Define EvidenceRecord (id, type, rule_id, module, source_span, target_span, rationale, confidence_note) 
-- [ ] 0.3.3 Define AuditRecord (sequence_id, timestamp, isa_instruction, input_hash, artifact_snapshot, evidence_chain: list[EvidenceRecord.id], flags_raised) 
-- [ ] 0.3.4 Define Diagnostic (severity, subsystem, issue, evidence, action, repaired) 
-- [ ] 0.3.5 Implement EvidenceRegistry class (append-only store, JSONL serialization to audit_trace.jsonl) 
+- [x] 0.3.1 Define EvidenceType enum (TERM_MATCH, ENTITY_PRESERVED, POLICY_ARBITRATION, STRUCTURAL_MAPPING, LLM_DECISION, HUMAN_OVERRIDE, CONTEXTUAL_INFERENCE) 
+- [x] 0.3.2 Define EvidenceRecord (id, type, rule_id, module, source_span, target_span, rationale, confidence_note) 
+- [x] 0.3.3 Define AuditRecord (sequence_id, timestamp, isa_instruction, input_hash, artifact_snapshot, evidence_chain: list[EvidenceRecord.id], flags_raised) 
+- [x] 0.3.4 Define Diagnostic (severity, subsystem, issue, evidence, action, repaired) 
+- [x] 0.3.5 Implement EvidenceRegistry class (append-only store, JSONL serialization to audit_trace.jsonl) 
  
 ### 0.4 Deterministic Cache Foundation (from CACHE_STRATEGY.md) 
  
-- [ ] 0.4.1 Implement CacheKeyGenerator: 
+- [x] 0.4.1 Implement CacheKeyGenerator: 
     - Canonical JSON serialization with sorted keys 
     - Components: source_text, glossary_hash, entity_hash, model_endpoint, model_version, policy_stack_hash 
     - SHA-256 output 
-- [ ] 0.4.2 Implement TranslationCache class (diskcache/SQLite backend): 
+- [x] 0.4.2 Implement TranslationCache class (diskcache/SQLite backend): 
     - get(key) -> TranslationResult | None 
     - set(key, result) -> None 
     - invalidate(pattern) -> None (CLI: tra cache-clear) 
     - No TTL (static facts) 
-- [ ] 0.4.3 Define TranslationResult (translation, evidence_chain, cache_hit: bool) 
+- [x] 0.4.3 Define TranslationResult (translation, evidence_chain, cache_hit: bool) 
  
 ---
  
@@ -79,9 +79,9 @@ Phase 1: Memory & Utilities — Structural Parsing (Day 1-2)
 ### 1.3 Glossary Builder 
  
 - [ ] 1.3.1 Frequency analysis (TF-IDF on technical terms) 
-- [ ] 1.3.2 ZH-EN Module lookup for canonical mappings 
+- [x] 1.3.2 ZH-EN Module lookup for canonical mappings 
 - [ ] 1.3.3 LLM-assisted candidate generation for unknown terms (prompt with context) 
-- [ ] 1.3.4 Conflict detection: same source term → multiple targets = GLOSSARY_CONFLICT exception 
+- [x] 1.3.4 Conflict detection: same source term → multiple targets = GLOSSARY_CONFLICT exception 
  
 ---
  
@@ -333,14 +333,18 @@ File Structure Summary
   │   ├── conftest.py 
   │   ├── test_isa.py 
   │   ├── test_kernel.py 
-  │   ├── test_policy.py 
   │   ├── test_anchor.py 
-  │   ├── test_cache.py 
-  │   ├── test_evidence.py 
+  │   ├── test_benchmark.py 
+  │   ├── test_modules.py 
+  │   ├── test_phase0.py 
+  │   ├── test_phase6_hardening.py 
+  │   ├── test_recovery.py 
+  │   ├── test_reporting.py 
+  │   ├── test_utils.py 
+  │   ├── test_validate.py 
+  │   ├── test_outstanding_findings.py 
   │   └── benchmark/ 
-  │       ├── runner.py 
-  │       ├── cases/              # S/F/T/D/E test fixtures 
-  │       └── test_benchmarks.py 
+  │       └── cases/              # S/F/T/D/E + R test fixtures (JSONL) 
   ├── compilation_artifacts/      # Generated at runtime 
   ├── audit_trace.jsonl           # Generated at runtime 
   └── README.md 

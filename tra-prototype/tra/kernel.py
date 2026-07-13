@@ -165,7 +165,18 @@ class TRAKernel:
         # before. If the ISA raises, the state must NOT advance — this is the
         # spec contract (CLAUDE.md:19 / TRA-SPECIFICATION.md §2.1: "transitions
         # are triggered only by successful completion of ISA instructions").
-        analyze_document(src, self.ctx, self.audit)
+        # TRA-004: route TRA-EXCEPTION types through _recover (EXCEPTION_HANDLER)
+        # instead of propagating uncaught to the caller.
+        try:
+            analyze_document(src, self.ctx, self.audit)
+        except TRAException as exc:
+            self._recover(exc)
+            # analyze_document failed; cannot continue the pipeline. The
+            # state stays at INITIALIZE_RUNTIME (TRA-007). Flush the audit
+            # trail so the EXCEPTION_HANDLER record is persisted, then return
+            # an empty target — the caller's L3 gate will reject it.
+            self.audit.flush()
+            return ""
         self._transition(KernelState.ANALYZE_DOCUMENT)
         # Runtime invariant: analyze_document must populate the profile and
         # structural map. Use hard raises (not `assert`) so they survive
