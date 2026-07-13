@@ -76,3 +76,24 @@ class Unrecoverable(TRAException):
     """REPAIR_SEGMENT cannot resolve without violating a higher policy."""
 
     code = "UNRECOVERABLE"
+
+
+class ConformanceFailure(TRAException):
+    """Pipeline completed but the output fails the conformance gate.
+
+    Raised by the Kernel when VERIFY_OUTPUT reports BLOCKING diagnostics
+    after the repair loop exhausts its budget (Spec §8 / TRA-CONFORMANCE-
+    GUIDE.md: "If [BLOCKING diagnostics are] present, certification is
+    denied"). The translate CLI catches this and exits 1 so a non-conformant
+    output is never silently published as "translated".
+    """
+
+    code = "CONFORMANCE_FAILURE"
+
+    def __init__(self, message: str = "", *, blocking_count: int = 0) -> None:
+        self.blocking_count = blocking_count
+        default = (
+            f"CONFORMANCE_FAILURE: {blocking_count} BLOCKING "
+            f"diagnostic(s) remain after repair"
+        )
+        super().__init__(message or default)

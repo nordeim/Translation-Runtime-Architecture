@@ -104,12 +104,25 @@ class TranslationCache:
             return
         self._cache.set(key, result.model_dump(mode="json"), expire=None)
 
-    def invalidate(self, pattern: str | None = None) -> None:
-        """Manual invalidation (CLI: tra cache-clear). No TTL otherwise."""
+    def invalidate(self, pattern: str | None = None) -> int:
+        """Manual invalidation (CLI: tra cache-clear). No TTL otherwise.
+
+        Returns the number of entries deleted. If `pattern` is supplied it
+        is treated as an ``fnmatch`` glob (e.g. ``"translation:*"``); the
+        previous implementation passed the pattern to ``diskcache.delete()``
+        which takes a LITERAL key — silently deleting nothing (TRA-011).
+        """
         if not self.enabled or self._cache is None:
-            return
+            return 0
         if pattern:
-            # diskcache.delete supports glob patterns
-            self._cache.delete(pattern)
-        else:
-            self._cache.clear()
+            import fnmatch
+
+            deleted = 0
+            for key in list(self._cache.iterkeys()):
+                if fnmatch.fnmatch(key, pattern) and self._cache.delete(key):
+                    deleted += 1
+            return deleted
+        # No pattern: clear everything.
+        count = len(self._cache)
+        self._cache.clear()
+        return count

@@ -1,15 +1,17 @@
-"""TRA prototype CLI (Phase 0.1.5 skeleton).
+"""TRA prototype CLI.
 
 Subcommands:
-  translate    Run the TRA pipeline on a Markdown file (Phase 2+; stubbed).
-  cache-clear  Invalidate the deterministic cache (CACHE_STRATEGY.md).
-  audit        Summarize an audit_trace.jsonl (EVIDENCE_SCHEMA.md).
+  translate    Run the full TRA pipeline on a Markdown file.
+  validate     Standalone L3/L4 conformance gate (zero BLOCKING = PASS).
+  audit        Summarize an audit_trace.jsonl (+ conformance report).
+  cache-clear  Invalidate the deterministic cache (glob or full clear).
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.console import Console
@@ -83,10 +85,15 @@ def translate(
 ) -> None:
     """Translate INPUT_MD through the full TRA pipeline."""
     cfg = BootstrapConfig.from_yaml(ctx.obj["config_path"])
+    # BootstrapConfig is frozen (TRA-018); use model_copy to apply overrides
+    # rather than mutating in place.
+    updates: dict[str, Any] = {}
     if lang:
-        cfg.language_pair = lang
+        updates["language_pair"] = lang
     if level:
-        cfg.conformance_level = _resolve_level(level)
+        updates["conformance_level"] = _resolve_level(level)
+    if updates:
+        cfg = cfg.model_copy(update=updates)
 
     console.print(
         f"[bold]TRA[/bold] bootstrap OK — "
@@ -94,42 +101,52 @@ def translate(
         f"level=[cyan]{cfg.conformance_level.value}[/cyan]"
     )
 
+    from tra.exceptions import ConformanceFailure
     from tra.kernel import TRAKernel
 
     kernel = TRAKernel(cfg, interactive=interactive)
-    target = kernel.run(input_md)
+    try:
+        target = kernel.run(input_md)
+    except ConformanceFailure as exc:
+        # L3+ gate enforced in-band by the kernel (TRA-005). A non-conformant
+        # output must never be silently published as "translated".
+        console.print(
+            f"[red]CONFORMANCE FAILURE[/red] — {exc}\n"
+            f"  Review [cyan]{cfg.audit_trace}[/cyan] and "
+            f"[cyan]{cfg.compilation_dir}/[/cyan] before publishing."
+        )
+        raise SystemExit(1) from exc
 
     if output is None:
         output = input_md.with_name(f"{input_md.stem}.translated.md")
     output.write_text(target, encoding="utf-8")
 
-    blocking = sum(
-        1
-        for rec in kernel.audit._buffer
-        if rec.flags_raised and "BLOCKING" in rec.flags_raised
-    )
     console.print(
         f"[green]Translated[/green] -> [cyan]{output}[/cyan]  "
         f"(audit: {cfg.audit_trace}, "
         f"artifacts: {cfg.compilation_dir})"
     )
-    if blocking:
-        console.print(
-            f"[red]WARNING:[/red] {blocking} BLOCKING flag(s) raised — "
-            "review audit_trace.jsonl before publishing."
-        )
 
 
 @cli.command(name="cache-clear")
-@click.option("--pattern", default=None, help="Optional key pattern to delete.")
+@click.option("--pattern", default=None, help="Optional fnmatch glob to delete.")
 @click.pass_context
 def cache_clear(ctx: click.Context, pattern: str | None) -> None:
     """Invalidate cache entries (manual; no TTL)."""
     cfg = BootstrapConfig.from_yaml(ctx.obj["config_path"])
     cache = TranslationCache(cfg.cache_directory, enabled=cfg.cache_enabled)
-    cache.invalidate(pattern)
+    deleted = cache.invalidate(pattern)
     target = pattern or "ALL"
-    console.print(f"[green]Cache invalidated:[/green] {target}")
+    if deleted:
+        console.print(
+            f"[green]Cache invalidated:[/green] {target} "
+            f"([bold]{deleted}[/bold] entr{'y' if deleted == 1 else 'ies'} deleted)"
+        )
+    else:
+        console.print(
+            f"[yellow]Cache invalidated:[/yellow] {target} "
+            f"([dim]0 entries matched — nothing deleted[/dim])"
+        )
 
 
 @cli.command()

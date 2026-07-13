@@ -24,7 +24,7 @@ from .diagnostics import (
     Diagnostic,
     EvidenceRegistry,
 )
-from .exceptions import TRAException, Unrecoverable
+from .exceptions import ConformanceFailure, TRAException, Unrecoverable
 from .isa import (
     analyze_document,
     build_entity_table,
@@ -127,8 +127,13 @@ class TRAKernel:
         self._transition(KernelState.INITIALIZE_RUNTIME)
         self._transition(KernelState.ANALYZE_DOCUMENT)
         analyze_document(src, self.ctx, self.audit)
-        assert self.ctx.document_profile is not None
-        assert self.ctx.structural_map is not None
+        # Runtime invariant: analyze_document must populate the profile and
+        # structural map. Use hard raises (not `assert`) so they survive
+        # `python -O` (TRA-019).
+        if self.ctx.document_profile is None:
+            raise TRAException("ANALYZE_DOCUMENT did not populate document_profile")
+        if self.ctx.structural_map is None:
+            raise TRAException("ANALYZE_DOCUMENT did not populate structural_map")
         profile: DocumentProfile = self.ctx.document_profile
         smap: StructuralMap = self.ctx.structural_map
 
@@ -147,6 +152,27 @@ class TRAKernel:
 
         self._transition(KernelState.REPAIR_IF_NEEDED)
         target = self._repair_loop(target, src, diagnostics)
+
+        # L3+ conformance gate (Spec §8 / TRA-CONFORMANCE-GUIDE.md:51):
+        # if BLOCKING diagnostics remain after the repair loop, the output
+        # is NOT conformant. The standalone `validate` command enforces this
+        # out-of-band; the kernel enforces it in-band so `translate` cannot
+        # silently publish a non-conformant output. L1/L2 do not require
+        # zero-BLOCKING (they are lower strictness dials).
+        if self.config.conformance_level in (
+            ConformanceLevel.L3_STRICT,
+            ConformanceLevel.L4_FORENSIC,
+        ):
+            final_diags = verify_output(target, src, self.ctx, self.audit)
+            final_blocking = [d for d in final_diags if d.severity == Severity.BLOCKING]
+            if final_blocking:
+                self.audit.flush()
+                raise ConformanceFailure(
+                    f"CONFORMANCE_FAILURE: {len(final_blocking)} BLOCKING "
+                    f"diagnostic(s) remain after repair loop — output is not "
+                    f"L3-conformant",
+                    blocking_count=len(final_blocking),
+                )
 
         self._transition(KernelState.AUDIT_DIAGNOSTICS)
         self.audit.flush()

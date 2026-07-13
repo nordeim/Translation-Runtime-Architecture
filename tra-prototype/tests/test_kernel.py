@@ -13,9 +13,14 @@ def _kernel(tmp_path: Path) -> TRAKernel:
     # Resolve config.yaml relative to the repo so the suite is cwd-independent.
     config_path = Path(__file__).resolve().parent.parent / "config.yaml"
     cfg = BootstrapConfig.from_yaml(str(config_path))
-    cfg.cache_directory = str(tmp_path / "cache")
-    cfg.compilation_dir = str(tmp_path / "compilation_artifacts")
-    cfg.audit_trace = str(tmp_path / "audit_trace.jsonl")
+    # BootstrapConfig is frozen (TRA-018); use model_copy for path overrides.
+    cfg = cfg.model_copy(
+        update={
+            "cache_directory": str(tmp_path / "cache"),
+            "compilation_dir": str(tmp_path / "compilation_artifacts"),
+            "audit_trace": str(tmp_path / "audit_trace.jsonl"),
+        }
+    )
     return TRAKernel(cfg)
 
 

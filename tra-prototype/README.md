@@ -1,6 +1,6 @@
 # TRA Prototype Engine
 
-A Phase 0–5 reference implementation of **TRA v1.0** (Translation Runtime
+A Phase 0–6 reference implementation of **TRA v1.0** (Translation Runtime
 Architecture) — a normative design for high-fidelity technical translation
 engines. This engine is conformant with the Kernel / Memory Model / ISA / Policy
 Engine of the spec, with a deterministic ZH↔EN Language Module wired in.
@@ -75,5 +75,23 @@ mypy --strict tra
   called — phrasing is rule-based (e.g. "may Confirmed" reads literally).
 - **Inline-code glossary substitution** is not yet suppressed (S-03): terms
   inside backticks are still run through the glossary.
-- **Phase 6** (exception hardening, human-in-the-loop, structlog, L4 evidence
-  tracing) is pending.
+- **`structlog`** is a listed dependency but the engine uses the plain
+  `AuditTrail` (no structured/correlation-ID logging) — Phase 6.3.1 open.
+- **Segment-level parallelism** (`asyncio`) is not implemented — Phase 6.5.1
+  open.
+- **Cross-run glossary/entity caching** — only the translation output is
+  cached across runs; glossary/entity tables are rebuilt per run (Phase 6.5.2
+  open).
+- **Phase 7** (ADRs, API reference, module authoring guide, conformance
+  self-audit) has not started.
+- **TRANSLATE_SEGMENT** currently operates on the whole document rather than
+  per leaf segment; the kernel passes the full source to `translate_segment`.
+  This affects cache granularity, `RepairAttempt.segment_index`, and the L4
+  line-by-line trace (see `docs/audit/` for the full audit report).
+- **Module registry** is the sanctioned extension point but the kernel
+  currently hard-codes `ZHENModule()` — registered modules are not yet picked
+  up by `tra_cli.py translate`.
+
+See `docs/audit/TRA_audit_findings_register.xlsx` for the full 35-finding
+audit register and `docs/audit/TRA_Prototype_Audit_Report.docx` for the
+narrative report.

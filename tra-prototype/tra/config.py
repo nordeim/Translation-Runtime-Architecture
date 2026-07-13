@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .memory import ConformanceLevel, PolicyPriority
 
@@ -21,7 +21,15 @@ DEFAULT_POLICY_STACK: list[PolicyPriority] = [
 
 
 class BootstrapConfig(BaseModel):
-    """Parsed tvm_bootstrap — read-only Immutable Config segment."""
+    """Parsed tvm_bootstrap — read-only Immutable Config segment.
+
+    Frozen (TRA-018): the Immutable Config segment is read-only by spec
+    (CLAUDE.md:53 "Memory Model: Immutable Config (read-only)"). CLI
+    overrides use `model_copy(update=...)` to produce a new instance
+    rather than mutating in place.
+    """
+
+    model_config = ConfigDict(frozen=True)
 
     language_pair: str
     domain: str

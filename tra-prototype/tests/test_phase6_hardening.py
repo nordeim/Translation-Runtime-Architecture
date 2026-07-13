@@ -101,9 +101,14 @@ def test_l4_forensic_trace_emitted_at_l4(tmp_path: Path):
     from tra.config import BootstrapConfig
 
     base = BootstrapConfig.from_yaml(cfg)
-    base.conformance_level = ConformanceLevel.L4_FORENSIC
-    base.audit_trace = str(tmp_path / "audit.jsonl")
-    base.compilation_dir = str(tmp_path / "artifacts")
+    # BootstrapConfig is frozen (TRA-018); use model_copy for overrides.
+    base = base.model_copy(
+        update={
+            "conformance_level": ConformanceLevel.L4_FORENSIC,
+            "audit_trace": str(tmp_path / "audit.jsonl"),
+            "compilation_dir": str(tmp_path / "artifacts"),
+        }
+    )
     kernel = TRAKernel(base)
     kernel.run("# Title\n\n系统 成立 是 高度可信 的。\n")
     trace = tmp_path / "artifacts" / "evidence_trace.jsonl"

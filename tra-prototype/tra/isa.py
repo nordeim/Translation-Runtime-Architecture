@@ -241,22 +241,28 @@ def build_entity_table(
         if ent.name in seen:
             continue
         # ENTITY_AMBIGUITY: default to Entity (immutable). Type may come
-        # from the module hint or the classifier.
+        # from the module hint or the classifier. Entity is frozen (TRA-018),
+        # so we use model_copy to apply the hint + context rather than
+        # mutating in place.
         hint = _MODULE.entity_type_hint(ent.name)
-        if hint is not None:
-            ent.type = hint
-        ent.mutable = False
-        ent.context = "source-document"
-        seen.add(ent.name)
-        table.append(ent)
+        final = ent.model_copy(
+            update={
+                "type": hint if hint is not None else ent.type,
+                "mutable": False,
+                "context": "source-document",
+            }
+        )
+        seen.add(final.name)
+        table.append(final)
         evidence.add(
             EvidenceRecord(
                 type=EvidenceType.ENTITY_PRESERVED,
                 module="modules.zh_en",
-                source_span=ent.name,
-                target_span=ent.name,
+                source_span=final.name,
+                target_span=final.name,
                 rationale=(
-                    f"Entity preserved verbatim (mutable=False), type={ent.type.value}"
+                    f"Entity preserved verbatim (mutable=False), "
+                    f"type={final.type.value}"
                 ),
             )
         )
@@ -319,15 +325,35 @@ def translate_segment(
             # raise). The rule path is weaker on fluency but preserves all
             # BLOCKING invariants (factual / entity / terminology / epistemic).
             target, basis = _rule_translate(source_segment, glossary, entities)
+            # Emit ONE complete audit record (evidence + degraded flag) and
+            # return early. Previously the code fell through to emit a SECOND
+            # record without the degraded flag — an auditor inspecting the
+            # last record per segment would miss the degradation (TRA-015).
+            rec = EvidenceRecord(
+                type=EvidenceType.LLM_DECISION,
+                module="isa.translate_segment",
+                source_span=source_segment,
+                target_span=target,
+                rationale=(
+                    f"{basis} (glossary + entity + epistemic substitution; "
+                    f"degraded from llm_unavailable: {exc!r})"
+                ),
+            )
+            ev_id = evidence.add(rec)
+            result = TranslationResult(
+                translation=target, evidence_ids=[ev_id], cache_hit=False
+            )
+            cache.set(cache_key, result)
             audit.append(
                 "TRANSLATE_SEGMENT",
-                _hash(source_segment),
-                [],
+                cache_key,
+                [ev_id],
                 artifact_snapshot={
                     "degraded": True,
                     "reason": f"llm_unavailable: {exc!r}",
                 },
             )
+            return result
     else:
         target, basis = _rule_translate(source_segment, glossary, entities)
 
@@ -513,9 +539,13 @@ def repair_segment(
             )
 
     # Re-verify the repaired segment does not introduce new BLOCKING.
+    # Per the surgical-repair invariant (TRA-ISA-REFERENCE.md §REPAIR_SEGMENT:
+    # "must not introduce new ones"), ANY new BLOCKING is unrecoverable —
+    # regardless of attempt number. The attempt/max_retries budget governs
+    # the kernel's repair LOOP (re-queuing), not this function's contract.
     sub = verify_output(repaired, source_segment, ctx, audit)
     new_blocking = [d for d in sub if d.severity == Severity.BLOCKING]
-    if new_blocking and attempt >= max_retries:
+    if new_blocking:
         raise Unrecoverable("UNRECOVERABLE: repair introduces new BLOCKING violation")
 
     ev_id = evidence.add(

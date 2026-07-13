@@ -1,0 +1,20 @@
+# TRA runtime artifacts (generated at run time, must never be committed)
+audit_trace.jsonl
+cache/
+compilation_artifacts/
+
+# Python
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

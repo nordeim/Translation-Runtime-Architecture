@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from tra.cache import TranslationCache, TranslationResult
 from tra.diagnostics import (
     AuditTrail,
@@ -239,6 +240,132 @@ def test_repair_resolves_epistemic_drift():
     repaired = repair_segment("it is Valid", "成立", diag, ctx, ev, _audit())
     assert "Confirmed" in repaired
     assert "Valid" not in repaired
+
+
+# --- TRA-028: repair_segment must raise on new BLOCKING at ANY attempt ---
+
+
+def test_repair_raises_on_new_blocking_at_attempt_1():
+    """TRA-003 / TRA-028: repair_segment must raise Unrecoverable when the
+    repair introduces a new BLOCKING violation — regardless of attempt number.
+
+    The surgical-repair invariant (TRA-ISA-REFERENCE.md §REPAIR_SEGMENT:
+    "must not introduce new ones") is unconditional. Previously the code
+    only raised when `attempt >= max_retries`, silently returning broken
+    output at attempt=1.
+    """
+    from tra.diagnostics import Diagnostic
+    from tra.exceptions import Unrecoverable
+
+    ctx = _ctx()
+    ev = EvidenceRegistry()
+    build_glossary(
+        "成立",
+        DocumentProfile(type="x", register_="y", intent="z", audience="a"),
+        ctx,
+        ev,
+        _audit(),
+    )
+    # Glossary maps 成立 -> Confirmed. "Valid" is a forbidden drift target.
+    # Terminology diagnostic asks the repair to translate the source term.
+    diag = Diagnostic(
+        severity=Severity.WARNING,
+        subsystem="terminology",
+        issue="Source term not translated: '成立'",
+        evidence="expected canonical target 'Confirmed'",
+        action="Apply canonical mapping",
+    )
+    # target "成立 Valid" — repair substitutes 成立 -> Confirmed, yielding
+    # "Confirmed Valid" which contains the forbidden drift target "Valid".
+    with pytest.raises(Unrecoverable):
+        repair_segment(
+            "成立 Valid",
+            "成立 Valid",
+            diag,
+            ctx,
+            ev,
+            _audit(),
+            attempt=1,
+            max_retries=3,
+        )
+
+
+# --- TRA-029: verify_output must never read confidence_note -------------
+
+
+def test_verify_output_ignores_confidence_note():
+    """TRA-029: the 'never self-score' invariant (Spec §7) must hold at the
+    enforcement boundary. verify_output must NOT read confidence_note even
+    when low-confidence records are present in the context's glossary.
+
+    Mutation testing confirmed that adding a confidence_note read to
+    verify_output left all prior tests green. This test closes that gap.
+    """
+    from tra.memory import GlossaryEntry, GlossaryStatus
+
+    ctx = _ctx()
+    ev = EvidenceRegistry()
+    build_glossary(
+        "成立",
+        DocumentProfile(type="x", register_="y", intent="z", audience="a"),
+        ctx,
+        ev,
+        _audit(),
+    )
+    # Inject a low-confidence glossary entry into the context — verify_output
+    # reads ctx.glossary_cache, so if it self-scores it would flag this.
+    ctx.glossary_cache.append(
+        GlossaryEntry(
+            source="低置信度词",
+            target="low-confidence-term",
+            status=GlossaryStatus.CANONICAL,
+            confidence_note=0.01,  # very low — must NOT trigger any diagnostic
+        )
+    )
+    # Clean target: no source terms, no forbidden targets, no missing entities.
+    diags = verify_output("clean target text", "clean source text", ctx, _audit())
+    # No diagnostic should reference the low-confidence entry.
+    assert not any("low-confidence" in d.issue for d in diags)
+    assert not any("低置信度" in d.issue for d in diags)
+
+
+# --- TRA-030: severity classification is part of the spec contract -----
+
+
+def test_verify_output_terminology_is_warning_not_blocking():
+    """TRA-030: untranslated source terms are WARNING (Priority 4), not
+    BLOCKING. A mutation escalating terminology to BLOCKING would silently
+    make the L3 gate stricter than the spec intends.
+    """
+    ctx = _ctx()
+    ev = EvidenceRegistry()
+    build_glossary(
+        "成立",
+        DocumentProfile(type="x", register_="y", intent="z", audience="a"),
+        ctx,
+        ev,
+        _audit(),
+    )
+    # Target still contains the untranslated source term "成立".
+    diags = verify_output("成立 here", "成立 here", ctx, _audit())
+    terminology = [d for d in diags if d.subsystem == "terminology"]
+    assert terminology, "expected at least one terminology diagnostic"
+    assert all(d.severity == Severity.WARNING for d in terminology)
+    assert not any(d.severity == Severity.BLOCKING for d in terminology)
+
+
+def test_verify_output_structural_mismatch_is_blocking():
+    """TRA-030: heading-count mismatch is BLOCKING (Priority 2). A mutation
+    demoting structural to WARNING would silently make the L3 gate more
+    permissive than the spec intends.
+    """
+    ctx = _ctx()
+    # Source has 1 heading; target has 0 — structural mismatch.
+    analyze_document("# Heading\n\nbody", ctx, _audit())
+    diags = verify_output("no heading here", "# Heading\n\nbody", ctx, _audit())
+    structural = [d for d in diags if d.subsystem == "structural"]
+    assert structural, "expected at least one structural diagnostic"
+    assert all(d.severity == Severity.BLOCKING for d in structural)
 
 
 # --- Phase 4 integration: module rule layer fires via ISA ------------

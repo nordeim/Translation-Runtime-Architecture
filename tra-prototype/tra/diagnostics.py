@@ -155,12 +155,3 @@ class AuditTrail:
                 if line:
                     records.append(AuditRecord.model_validate_json(line))
         return records
-
-    def count_blocking(self, evidence_for_record: dict[str, EvidenceRecord]) -> int:
-        """Count BLOCKING diagnostics recorded in audit evidence.
-
-        Note: BLOCKING is raised at VERIFY time, not in the audit trail itself.
-        This helper inspects the referenced evidence records for a policy
-        violation flag if one has been attached.
-        """
-        return 0  # hook for VERIFY to populate; trail stores records, not severities

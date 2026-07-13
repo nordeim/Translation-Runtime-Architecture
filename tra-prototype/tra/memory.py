@@ -130,7 +130,14 @@ class StructuralMap(BaseModel):
 
 
 class GlossaryEntry(BaseModel):
-    """A canonical terminology mapping (BUILD_GLOSSARY output)."""
+    """A canonical terminology mapping (BUILD_GLOSSARY output).
+
+    Immutable by spec (TRA-ISA-REFERENCE.md §BUILD_GLOSSARY Outputs): once
+    emitted, a glossary entry must not be mutated — VERIFY and REPAIR read it
+    as a stable contract.
+    """
+
+    model_config = ConfigDict(frozen=True)
 
     source: str
     target: str
@@ -144,7 +151,9 @@ class GlossaryEntry(BaseModel):
 
 
 class ForbiddenMapping(BaseModel):
-    """A mapping explicitly disallowed (BUILD_GLOSSARY output)."""
+    """A mapping explicitly disallowed (BUILD_GLOSSARY output). Immutable."""
+
+    model_config = ConfigDict(frozen=True)
 
     source: str
     forbidden_target: str
@@ -152,7 +161,14 @@ class ForbiddenMapping(BaseModel):
 
 
 class Entity(BaseModel):
-    """An immutable identifier isolated from natural-language translation."""
+    """An immutable identifier isolated from natural-language translation.
+
+    Spec §3 / TRA-ISA-REFERENCE.md §BUILD_ENTITY_TABLE: entities are never
+    translated, casing/punctuation preserved verbatim. `frozen=True`
+    enforces the immutability claim at the model level (TRA-018).
+    """
+
+    model_config = ConfigDict(frozen=True)
 
     name: str
     type: EntityType

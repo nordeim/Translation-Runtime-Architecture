@@ -64,8 +64,11 @@ raises, the engine degrades to the rule path instead of failing.
 ```bash
 cd tra-prototype
 python -m venv .venv && source .venv/bin/activate   # if not already created
-pip install -e .                                    # installs deps from pyproject
+pip install -e ".[dev]"                             # runtime + dev deps (ruff, mypy, pytest)
 ```
+
+> The `[dev]` extra is required for the quality gates in §7 (ruff, mypy,
+> pytest). Without it, `pip install -e .` installs only runtime deps.
 
 Configuration: `config.yaml` (the `tvm_bootstrap` config). Key fields:
 

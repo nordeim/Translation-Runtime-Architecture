@@ -53,10 +53,9 @@ disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["diskcache", "yaml"]
+module = ["diskcache", "yaml", "markdown_it", "markdown_it.token", "rich.console", "rich.prompt"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"
 addopts = "-q"

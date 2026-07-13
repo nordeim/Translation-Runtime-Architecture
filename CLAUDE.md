@@ -39,11 +39,21 @@ ruff format . && ruff check . && mypy --strict tra && pytest tests
 
 **Extension rule (reinforces the §9 note):** new language bridges (e.g. `fr-en`) register through `build_default_registry()` in `modules/registry.py` as a `ModuleInterface`. They must not touch the Kernel or ISA — that separation is load-bearing.
 
-**Known gaps (honest, not yet addressed):**
+**Known gaps (not yet addressed):**
 
 - `structlog` is a listed dependency but the engine uses the plain `AuditTrail` (no structured/correlation-ID logging — 6.3.1 open).
 - No `asyncio` segment-level parallelism (6.5.1 open).
 - Glossary/entity tables are rebuilt per run; only the translation output is cached across runs via diskcache (6.5.2 open).
+- **Segment-level granularity (TRA-001):** `TRANSLATE_SEGMENT` currently operates on the whole document rather than per leaf segment; the kernel passes the full source to `translate_segment`. Affects cache granularity, `RepairAttempt.segment_index`, and the L4 line-by-line trace.
+- **Module registry bypassed (TRA-002):** the kernel hard-codes `ZHENModule()` instead of routing through `build_default_registry()`; registered modules are not yet picked up by `tra_cli.py translate`.
+- **Exception recovery (TRA-004):** only `GlossaryConflict` and `Unrecoverable` reach `route_exception`; `BrokenMarkdown` propagates uncaught through the kernel, and `UnknownTerm`/`CertaintyConflict`/`EntityAmbiguity` are never raised in production code paths.
+- **Policy Engine scaffolding (TRA-006):** `PolicyResolver` is defined and tested but never invoked in production; `verify_output` does not consult the 6-priority stack for arbitration.
+- **Audit trail reproducibility (TRA-013):** `uuid4` evidence IDs + `datetime.now(UTC)` timestamps make `audit_trace.jsonl` non-byte-reproducible across runs — undermines L4 forensic hashing.
+- **Dependency hygiene (TRA-017):** `litellm`, `structlog`, `pydantic-settings`, `mdit-py-plugins`, `black`, `pytest-asyncio` are listed but unused.
+- **Phase 7 (documentation & delivery)** has not started: no ADRs, no API reference, no module authoring guide, no conformance self-audit.
+- **Benchmark coverage (TRA-031):** 13 of 23 spec cases implemented (S-01..S-04, S-06, D-01..D-03, E-01, E-03 missing); spec target is 100+.
+
+The full 35-finding audit register is in `docs/audit/TRA_audit_findings_register.xlsx`; the narrative report is `docs/audit/TRA_Prototype_Audit_Report.docx`.
 
 ## The mental model (requires reading multiple files)
 

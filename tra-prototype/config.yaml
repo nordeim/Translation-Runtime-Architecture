@@ -12,10 +12,10 @@ model_endpoint: "openai/gpt-4o-mini"
 model_version: "2024-07-18"
 
 # Deterministic-cache behaviour.
+# No TTL by design — technical facts are static (CACHE_STRATEGY.md).
 cache:
   enabled: true
   directory: "./cache"
-  expire: null   # static facts: no TTL
 
 # Repair loop guard (review-feedback.md).
 repair:
