@@ -343,4 +343,4 @@ You don't write a single line of code until we align on a plan. And you don't ca
 
 Now, please clone the GitHub repo using `git clone https://github.com/nordeim/Translation-Runtime-Architecture.git`, then meticulously review the included `AGENTS.md` , `CLAUDE.md` , `README.md` , `implementation_plan.md` , `tra-prototype/SKILL.md` to have a deep understanding of the WHAT, WHY and HOW of the project and its codebase design and architecture. Next, please meticulously validate your deep understanding against the codebase to check for alignment and to confirm the project's current status.
 
-Next, meticulously plan to use the relevant skills to conduct a systematic and thorough code review and audit of the cloned codebase. 
+Next, meticulously plan to use the skills in the included `tra-audit-skills/` folder (see `tra-audit-skills/README.md`) to conduct a systematic and thorough code review and audit of the cloned codebase. 
