@@ -642,3 +642,45 @@ class TestTRA008RewriteLinks:
             f"link target {link_target!r} has spaces — not a valid slug; "
             "rewrite_links not called (TRA-008)"
         )
+
+
+# =========================================================================
+# TRA-001 — Segment-level translation (code blocks are no-translate zones)
+# =========================================================================
+
+
+class TestTRA001SegmentLevel:
+    """TRA-001: TRANSLATE_SEGMENT must respect is_no_translate_zone markers.
+    Code blocks must NOT be translated — glossary terms inside backticks
+    must survive verbatim. The minimal fix: extract code blocks before
+    translation, translate the rest, restore code blocks after.
+    """
+
+    def test_code_block_not_translated(self, tmp_path: Path) -> None:
+        """A glossary term inside a code block must NOT be translated."""
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        # Source: a code block containing the glossary term "成立"
+        # and a paragraph containing "成立" (which SHOULD be translated).
+        source = "```\n成立 = True\n```\n\n系统成立。\n"
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L1_BASIC,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        target = kernel.run(source)
+        # The code block must still contain "成立" (untranslated).
+        assert "成立 = True" in target, (
+            "code block was translated — is_no_translate_zone not respected (TRA-001)"
+        )
+        # The paragraph's "成立" should be translated to "Confirmed".
+        assert "Confirmed" in target, "paragraph term should be translated"

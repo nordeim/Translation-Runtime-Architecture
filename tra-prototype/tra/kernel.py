@@ -357,10 +357,50 @@ class TRAKernel:
     # --- translation (segment-level, rule-based in Phase 2) -----------
 
     def _execute_translation(self, src: str) -> str:
-        # Phase 2: deterministic whole-doc substitution via the glossary +
-        # entity + epistemic lexicon. Segment granularity is wired in Phase 3.
-        result = translate_segment(src, self.ctx, self.cache, self.evidence, self.audit)
-        return result.translation
+        """Execute TRANSLATE_SEGMENT on the source.
+
+        TRA-001 (partial): code blocks are no-translate zones. We extract
+        them before translation, translate the rest, then restore them.
+        This protects inline code and fenced code blocks from glossary
+        substitution. Full segment-level translation (per leaf node) is
+        deferred — the current approach is a placeholder-based protection
+        that addresses the S-03 test case.
+        """
+        # Extract code blocks and protect them with placeholders.
+        placeholders: dict[str, str] = {}
+        protected = src
+
+        # Protect fenced code blocks (```...```).
+        _FENCE_RE = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
+
+        def _stash_fence(m: re.Match[str]) -> str:
+            key = f"__CODE_BLOCK_{len(placeholders)}__"
+            placeholders[key] = m.group(0)
+            return key
+
+        protected = _FENCE_RE.sub(_stash_fence, protected)
+
+        # Protect inline code (`...`).
+        _INLINE_RE = re.compile(r"`[^`\n]+`")
+
+        def _stash_inline(m: re.Match[str]) -> str:
+            key = f"__INLINE_CODE_{len(placeholders)}__"
+            placeholders[key] = m.group(0)
+            return key
+
+        protected = _INLINE_RE.sub(_stash_inline, protected)
+
+        # Translate the protected source (code blocks are now placeholders).
+        result = translate_segment(
+            protected, self.ctx, self.cache, self.evidence, self.audit
+        )
+        translated = result.translation
+
+        # Restore code blocks.
+        for key, original in placeholders.items():
+            translated = translated.replace(key, original)
+
+        return translated
 
     def _repair_loop(self, target: str, src: str, diagnostics: list[Diagnostic]) -> str:
         blocking = [d for d in diagnostics if d.severity == Severity.BLOCKING]
