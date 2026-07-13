@@ -9,15 +9,23 @@ Invariant (TRA "never self-score"): `confidence_note` is recorded for
 debugging ONLY and is NEVER used by VERIFY/REPAIR to make decisions. Routing
 is gated solely on evidence *presence* (empty evidence_chain -> RAISE_FLAG),
 never on a numeric score.
+
+Reproducibility (TRA-013): evidence IDs are content-addressed
+(``ev_{sha256(canonical_record)[:12]}``) and timestamps are injectable via
+``AuditTrail(clock=...)``. Two runs of identical source produce byte-identical
+``audit_trace.jsonl`` and ``evidence_trace.jsonl`` — required for L4 forensic
+hash-chain validation.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -34,10 +42,35 @@ class EvidenceType(StrEnum):
     CONTEXTUAL_INFERENCE = "contextual_inference"
 
 
+def _content_addressed_id(record: EvidenceRecord) -> str:
+    """Deterministic evidence ID: SHA-256 over the canonical record content.
+
+    Two records with identical content produce the same ID. This makes the
+    audit trail byte-reproducible across runs (TRA-013) — required for L4
+    forensic hash-chain validation. The ``id`` field itself is excluded from
+    the hash (it's the output).
+    """
+    payload = {
+        "type": record.type.value,
+        "rule_id": record.rule_id,
+        "module": record.module,
+        "source_span": record.source_span,
+        "target_span": record.target_span,
+        "rationale": record.rationale,
+        "confidence_note": record.confidence_note,
+    }
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return f"ev_{hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:12]}"
+
+
 class EvidenceRecord(BaseModel):
     """A single atom of decision provenance (EVIDENCE_SCHEMA.md §2.2)."""
 
-    id: str = Field(default_factory=lambda: f"ev_{uuid4().hex[:12]}")
+    # ID is assigned by EvidenceRegistry.add (content-addressed, TRA-013).
+    # The default_factory is a fallback for direct construction outside the
+    # registry (e.g., tests); production code goes through registry.add which
+    # overwrites the ID with the content-addressed value.
+    id: str = Field(default="")
     type: EvidenceType
     rule_id: str | None = Field(
         None, description="e.g. 'ZH-EN-RULE#042' — must cite a real rule/module"
@@ -55,6 +88,9 @@ class AuditRecord(BaseModel):
     """One immutable line in the audit trace (EVIDENCE_SCHEMA.md §2.3)."""
 
     sequence_id: int
+    # Timestamp is injected by AuditTrail.append (TRA-013) to make the trail
+    # byte-reproducible. The default_factory is a fallback for direct
+    # construction (e.g., loading from disk).
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     isa_instruction: str
     input_hash: str
@@ -77,12 +113,22 @@ class Diagnostic(BaseModel):
 
 
 class EvidenceRegistry:
-    """Append-only store for EvidenceRecords, keyed by id."""
+    """Append-only store for EvidenceRecords, keyed by content-addressed id."""
 
     def __init__(self) -> None:
         self._records: dict[str, EvidenceRecord] = {}
 
     def add(self, record: EvidenceRecord) -> str:
+        """Assign a content-addressed ID and store the record.
+
+        Returns the ID. Two records with identical content produce the same
+        ID (TRA-013 reproducibility). If the record already has a non-empty
+        ``id`` (e.g., loaded from disk), it is preserved.
+        """
+        if not record.id:
+            # EvidenceRecord is not frozen, so mutate in place — this keeps
+            # existing caller references (e.g., fixtures) valid after add().
+            record.id = _content_addressed_id(record)
         self._records[record.id] = record
         return record.id
 
@@ -101,13 +147,24 @@ class AuditTrail:
 
     Each AuditRecord is serialized as one line. The trace is the artifact the
     L3 conformance checklist inspects for zero BLOCKING errors.
+
+    Reproducibility (TRA-013): the ``clock`` callable is injected at
+    construction. Production code uses the default ``datetime.now(UTC)``;
+    tests can inject a deterministic clock (e.g., a fixed timestamp derived
+    from the source hash) to produce byte-identical trails across runs.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self.path = Path(path)
         self._seq = 0
         self._buffer: list[AuditRecord] = []
         self._flushed = 0
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     def append(
         self,
@@ -119,6 +176,7 @@ class AuditTrail:
     ) -> AuditRecord:
         record = AuditRecord(
             sequence_id=self._seq,
+            timestamp=self._clock(),
             isa_instruction=isa_instruction,
             input_hash=input_hash,
             evidence_chain=evidence_chain,

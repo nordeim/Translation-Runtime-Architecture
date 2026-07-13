@@ -14,7 +14,7 @@ from tra.diagnostics import (
 )
 from tra.hitl import format_unrecoverable, review_decision
 from tra.isa import repair_segment, translate_segment
-from tra.kernel import TRAKernel, _sanitize_input
+from tra.kernel import TRAKernel
 from tra.memory import (
     ConformanceLevel,
     DocumentProfile,
@@ -86,8 +86,10 @@ def test_graceful_degradation_on_llm_failure():
 
 
 def test_sanitize_strips_control_and_bidi():
+    from tra.utils import sanitize_input
+
     nasty = "clean\ntext\x00with\x01control‮bidi﻿"
-    out = _sanitize_input(nasty)
+    out = sanitize_input(nasty)
     assert "\x00" not in out
     assert "\x01" not in out
     assert "‮" not in out
@@ -102,8 +104,10 @@ def test_l4_forensic_trace_emitted_at_l4(tmp_path: Path):
 
     base = BootstrapConfig.from_yaml(cfg)
     # BootstrapConfig is frozen (TRA-018); use model_copy for overrides.
+    # Set base_dir=tmp_path for the path-safety validator (TRA-014).
     base = base.model_copy(
         update={
+            "base_dir": str(tmp_path),
             "conformance_level": ConformanceLevel.L4_FORENSIC,
             "audit_trace": str(tmp_path / "audit.jsonl"),
             "compilation_dir": str(tmp_path / "artifacts"),

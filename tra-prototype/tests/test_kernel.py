@@ -14,8 +14,11 @@ def _kernel(tmp_path: Path) -> TRAKernel:
     config_path = Path(__file__).resolve().parent.parent / "config.yaml"
     cfg = BootstrapConfig.from_yaml(str(config_path))
     # BootstrapConfig is frozen (TRA-018); use model_copy for path overrides.
+    # Set base_dir=tmp_path so the path-safety validator (TRA-014) accepts
+    # the absolute tmp_path locations.
     cfg = cfg.model_copy(
         update={
+            "base_dir": str(tmp_path),
             "cache_directory": str(tmp_path / "cache"),
             "compilation_dir": str(tmp_path / "compilation_artifacts"),
             "audit_trace": str(tmp_path / "audit_trace.jsonl"),

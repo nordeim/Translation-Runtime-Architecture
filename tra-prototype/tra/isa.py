@@ -71,9 +71,19 @@ def analyze_document(
 
     Failure: EMPTY_SOURCE, MALFORMED_MARKDOWN.
     Invariant: node_count(structural_map) == node_count(source_AST).
+
+    Sanitization chokepoint (TRA-012): the source is sanitized HERE, in the
+    ISA instruction, so every caller (TRAKernel.run, validate, benchmark)
+    is covered without each one having to remember to call sanitize_input.
     """
     if isinstance(source, Path):
         source = source.read_text(encoding="utf-8")
+
+    # Single chokepoint: strip control chars / bidi overrides / BOM before
+    # the source enters the pipeline (TRA-012).
+    from .utils import sanitize_input
+
+    source = sanitize_input(source)
 
     if not source.strip():
         raise TRAException("EMPTY_SOURCE: document contains no translatable content")

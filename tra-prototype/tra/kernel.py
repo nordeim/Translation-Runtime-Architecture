@@ -11,7 +11,7 @@ instructions. The Kernel must not skip instructions.
 from __future__ import annotations
 
 import json
-import re
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -72,40 +72,68 @@ _KERNEL_ORDER: list[KernelState] = [
 ]
 
 
-# Control characters that must never enter the pipeline (§6.5.3). Newlines,
-# tabs, and the common Unicode separators are preserved (markdown needs them);
-# null / C0 control / Unicode bidi overrides / BOM are stripped.
-_CONTROL_RE = re.compile(
-    "[" + "\x00-\x08\x0b\x0c\x0e-\x1f\x7f" + "\u202a-\u202e" + "\ufeff" + "]"
-)
-
-
-def _sanitize_input(text: str) -> str:
-    """Input validation & sanitization (Phase 6.5.3).
-
-    Strips control characters that could corrupt the markdown stream or
-    smuggle bidirectional-override attacks, without touching legitimate
-    whitespace. Pure: never raises; returns a safe copy.
-    """
-    return _CONTROL_RE.sub("", text)
+# Note: input sanitization (_sanitize_input) was moved to tra.utils.sanitize_input
+# (TRA-012) and is now called from analyze_document as the single chokepoint.
+# The kernel no longer needs its own copy.
 
 
 class TRAKernel:
     """Runs the full TRA pipeline on a source document."""
 
-    def __init__(self, config: BootstrapConfig, *, interactive: bool = False) -> None:
+    def __init__(
+        self,
+        config: BootstrapConfig,
+        *,
+        interactive: bool = False,
+        deterministic: bool = True,
+    ) -> None:
+        """Initialize the kernel.
+
+        Args:
+            config: The frozen BootstrapConfig (tvm_bootstrap).
+            interactive: If True, pause for HITL review on UNRECOVERABLE.
+            deterministic: If True (default), use a content-addressed clock
+                for the audit trail so two runs of identical source produce
+                byte-identical audit_trace.jsonl (TRA-013). Set to False for
+                production runs that want wall-clock timestamps.
+        """
         self.config = config
         self.interactive = interactive
         self.cache = TranslationCache(
             config.cache_directory, enabled=config.cache_enabled
         )
         self.evidence = EvidenceRegistry()
-        self.audit = AuditTrail(config.audit_trace)
+        # Deterministic clock for audit-trail reproducibility (TRA-013).
+        # The clock is seeded lazily from the source hash on the first run()
+        # call; before that, it falls back to a fixed epoch so any audit
+        # records appended at construction time are also deterministic.
+        self._deterministic = deterministic
+        self._source_hash_seed: str | None = None
+        if deterministic:
+            self.audit = AuditTrail(config.audit_trace, clock=self._deterministic_clock)
+        else:
+            self.audit = AuditTrail(config.audit_trace)
         self.ctx = RuntimeContext(
             configuration=config.model_dump(),
             style_profile=ZHENModule().get_style_profile(),
         )
         self.state = KernelState.BOOTSTRAP
+
+    def _deterministic_clock(self) -> datetime:
+        """Return a deterministic timestamp derived from the source hash.
+
+        All audit records in a single run share the same timestamp (the run's
+        source hash mapped to a valid datetime). This makes the audit trail
+        byte-reproducible across runs of identical source (TRA-013).
+        """
+        from datetime import UTC, datetime, timedelta
+
+        seed = self._source_hash_seed or "0" * 16
+        # Map the first 8 hex chars of the seed to a deterministic datetime
+        # in 2024 (a fixed epoch keeps the value stable and valid).
+        epoch = datetime(2024, 1, 1, tzinfo=UTC)
+        offset_seconds = int(seed[:8], 16) % (365 * 24 * 3600)
+        return epoch + timedelta(seconds=offset_seconds)
 
     def _transition(self, next_state: KernelState) -> None:
         if next_state not in _KERNEL_ORDER:
@@ -122,11 +150,23 @@ class TRAKernel:
     def run(self, source: str | Path) -> str:
         """Execute the full pipeline; return the translated target markdown."""
         src = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
-        src = _sanitize_input(src)
+        # Sanitization happens inside analyze_document (TRA-012 single chokepoint).
+
+        # Seed the deterministic clock from the source hash BEFORE any audit
+        # records are appended, so every record in this run gets the same
+        # deterministic timestamp (TRA-013 reproducibility).
+        if self._deterministic:
+            import hashlib
+
+            self._source_hash_seed = hashlib.sha256(src.encode("utf-8")).hexdigest()
 
         self._transition(KernelState.INITIALIZE_RUNTIME)
-        self._transition(KernelState.ANALYZE_DOCUMENT)
+        # TRA-007: transitions fire AFTER the ISA instruction succeeds, not
+        # before. If the ISA raises, the state must NOT advance — this is the
+        # spec contract (CLAUDE.md:19 / TRA-SPECIFICATION.md §2.1: "transitions
+        # are triggered only by successful completion of ISA instructions").
         analyze_document(src, self.ctx, self.audit)
+        self._transition(KernelState.ANALYZE_DOCUMENT)
         # Runtime invariant: analyze_document must populate the profile and
         # structural map. Use hard raises (not `assert`) so they survive
         # `python -O` (TRA-019).
@@ -137,21 +177,21 @@ class TRAKernel:
         profile: DocumentProfile = self.ctx.document_profile
         smap: StructuralMap = self.ctx.structural_map
 
-        self._transition(KernelState.BUILD_ARTIFACTS)
         try:
             build_glossary(src, profile, self.ctx, self.evidence, self.audit)
         except TRAException as exc:
             self._recover(exc)
         build_entity_table(src, smap, self.ctx, self.evidence, self.audit)
+        self._transition(KernelState.BUILD_ARTIFACTS)
 
-        self._transition(KernelState.EXECUTE_TRANSLATION)
         target = self._execute_translation(src)
+        self._transition(KernelState.EXECUTE_TRANSLATION)
 
-        self._transition(KernelState.VERIFY_OUTPUT)
         diagnostics = verify_output(target, src, self.ctx, self.audit)
+        self._transition(KernelState.VERIFY_OUTPUT)
 
-        self._transition(KernelState.REPAIR_IF_NEEDED)
         target = self._repair_loop(target, src, diagnostics)
+        self._transition(KernelState.REPAIR_IF_NEEDED)
 
         # L3+ conformance gate (Spec §8 / TRA-CONFORMANCE-GUIDE.md:51):
         # if BLOCKING diagnostics remain after the repair loop, the output

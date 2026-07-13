@@ -1,4 +1,6 @@
-"""Shared utilities (Phase 1): slugify, entity extraction, markdown helpers."""
+"""Shared utilities (Phase 1): slugify, entity extraction, markdown helpers,
+input sanitization (Phase 6.5.3 / TRA-012).
+"""
 
 from __future__ import annotations
 
@@ -11,11 +13,34 @@ __all__ = [
     "generate_github_slug",
     "extract_entities",
     "classify_entity",
+    "sanitize_input",
     "PRODUCT_RE",
     "VERSION_RE",
     "ACRONYM_RE",
     "CLI_RE",
 ]
+
+# Control characters that must never enter the pipeline (§6.5.3). Newlines,
+# tabs, and the common Unicode separators are preserved (markdown needs them);
+# null / C0 control / Unicode bidi overrides / BOM are stripped.
+_CONTROL_RE = re.compile(
+    "[" + "\x00-\x08\x0b\x0c\x0e-\x1f\x7f" + "\u202a-\u202e" + "\ufeff" + "]"
+)
+
+
+def sanitize_input(text: str) -> str:
+    """Input validation & sanitization (Phase 6.5.3 / TRA-012).
+
+    Strips control characters that could corrupt the markdown stream or
+    smuggle bidirectional-override attacks, without touching legitimate
+    whitespace. Pure: never raises; returns a safe copy.
+
+    This is the single chokepoint for sanitization — called from
+    ``analyze_document`` so every entry point (TRAKernel.run, validate,
+    benchmark) is covered.
+    """
+    return _CONTROL_RE.sub("", text)
+
 
 # PascalCase/camelCase product-ish tokens, optionally ending in a known
 # entity suffix (VMM, VM, DB, API, SDK).
