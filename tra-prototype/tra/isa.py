@@ -17,6 +17,7 @@ import hashlib
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from .anchor import build_structural_map
 from .cache import CacheKeyContext, TranslationCache, TranslationResult
@@ -153,6 +154,13 @@ def _detect_evidence_style(source: str) -> str | None:
 # --------------------------------------------------------------------------- #
 
 
+def _module(ctx: RuntimeContext) -> Any:
+    """Return the active language module (TRA-002). Prefers ctx.module
+    (set by the kernel from the registry); falls back to the module-level
+    _MODULE singleton for direct ISA calls in tests."""
+    return ctx.module if ctx.module is not None else _MODULE
+
+
 def build_glossary(
     source: str,
     profile: DocumentProfile,
@@ -165,12 +173,13 @@ def build_glossary(
     Invariant: every recurring term (>=2x) gets exactly one canonical mapping
     unless context_sensitive. CONFLICTING_MAPPINGS raised on two targets.
     """
-    mappings = _MODULE.get_glossary_mappings()
+    mod = _module(ctx)
+    mappings = mod.get_glossary_mappings()
     entries: list[GlossaryEntry] = []
     seen: dict[str, str] = {}
 
     for src, tgt in mappings.items():
-        if _MODULE.is_forbidden(src, tgt):
+        if mod.is_forbidden(src, tgt):
             raise GlossaryConflict(
                 f"CONFLICTING_MAPPINGS: {src!r} -> {tgt!r} is a known drift",
                 term=src,
@@ -201,7 +210,7 @@ def build_glossary(
             )
         )
 
-    forbidden: list[ForbiddenMapping] = _forbidden_from_module()
+    forbidden: list[ForbiddenMapping] = _forbidden_from_module(ctx)
 
     ctx.glossary_cache = entries
     audit.append(
@@ -213,9 +222,16 @@ def build_glossary(
     return entries, forbidden
 
 
-def _forbidden_from_module() -> list[ForbiddenMapping]:
+def _forbidden_from_module(ctx: RuntimeContext | None = None) -> list[ForbiddenMapping]:
+    """Build the forbidden-mappings list from the active module.
+
+    If ``ctx`` is supplied (TRA-002), use ctx.module; otherwise fall back to
+    the module-level _MODULE singleton (backward compat for verify_output
+    which may call this without a ctx in legacy paths).
+    """
+    mod = _module(ctx) if ctx is not None else _MODULE
     out: list[ForbiddenMapping] = []
-    banned = _MODULE.get_forbidden_targets()
+    banned = mod.get_forbidden_targets()
     for src, banned_str in banned.items():
         for tgt in banned_str.split("/"):
             out.append(
@@ -254,7 +270,7 @@ def build_entity_table(
         # from the module hint or the classifier. Entity is frozen (TRA-018),
         # so we use model_copy to apply the hint + context rather than
         # mutating in place.
-        hint = _MODULE.entity_type_hint(ent.name)
+        hint = _module(ctx).entity_type_hint(ent.name)
         final = ent.model_copy(
             update={
                 "type": hint if hint is not None else ent.type,
@@ -339,7 +355,9 @@ def translate_segment(
             # path so translation still completes (never self-score, never
             # raise). The rule path is weaker on fluency but preserves all
             # BLOCKING invariants (factual / entity / terminology / epistemic).
-            target, basis = _rule_translate(source_segment, glossary, entities)
+            target, basis = _rule_translate(
+                source_segment, glossary, entities, module=ctx.module
+            )
             # Emit ONE complete audit record (evidence + degraded flag) and
             # return early. Previously the code fell through to emit a SECOND
             # record without the degraded flag — an auditor inspecting the
@@ -389,14 +407,22 @@ def translate_segment(
 
 
 def _rule_translate(
-    segment: str, glossary: dict[str, str], entities: list[Entity]
+    segment: str,
+    glossary: dict[str, str],
+    entities: list[Entity],
+    module: Any = None,
 ) -> tuple[str, str]:
-    """Deterministic canonical translation via glossary + entity + epistemic."""
+    """Deterministic canonical translation via glossary + entity + epistemic.
+
+    If ``module`` is supplied (TRA-002), use its rule layer; otherwise fall
+    back to the module-level ``_MODULE`` singleton (backward compat).
+    """
+    mod = module if module is not None else _MODULE
     out = segment
     # 1. Language-module rule layer FIRST (parataxis->hypotaxis, nominalization,
     #    punctuation). Topic-comment forms like 系统成立 must resolve before the
     #    atomic 成立 -> Confirmed substitution would split them apart.
-    out = _MODULE.apply_zh_rules(out)
+    out = mod.apply_zh_rules(out)
     # 2. Epistemic-certainty lexicon (exact, never drift).
     for src, tgt in zh_en.EPISTEMIC_LEXICON.items():
         if src in out:
@@ -485,7 +511,7 @@ def verify_output(
             )
 
     # Epistemic: forbidden drift targets must not appear.
-    for fm in _forbidden_from_module():
+    for fm in _forbidden_from_module(ctx):
         if fm.forbidden_target in target:
             diagnostics.append(
                 Diagnostic(
@@ -550,7 +576,7 @@ def repair_segment(
 
     elif diagnostic.subsystem == "epistemic":
         # Revert to canonical marker.
-        for fm in _forbidden_from_module():
+        for fm in _forbidden_from_module(ctx):
             if fm.forbidden_target in repaired:
                 canon = glossary.get(fm.source, fm.source)
                 repaired = repaired.replace(fm.forbidden_target, canon)

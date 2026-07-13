@@ -501,3 +501,95 @@ class TestTRA033LLMSeamRobustness:
             llm_translate=returns_none,
         )
         assert "Confirmed" in res.translation
+
+
+# =========================================================================
+# TRA-002 — Module registry wired into kernel (not hard-coded ZHENModule)
+# =========================================================================
+
+
+class TestTRA002RegistryWiring:
+    """TRA-002: the kernel must use the module registry to select the language
+    module, not hard-code ZHENModule(). A registered stub module should be
+    picked up by the kernel.
+    """
+
+    def test_kernel_uses_registry_for_language_pair(self, tmp_path: Path) -> None:
+        """When a stub module is registered, the kernel must use its glossary
+        mappings — not ZHENModule's."""
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel, StyleProfile
+        from tra.modules.registry import ModuleRegistry
+
+        # Build a full stub module with all the methods the ISA expects.
+        class StubModule:
+            """Minimal stub module for TRA-002 registry wiring test."""
+
+            name = "stub-en"
+            kind = "language"
+            direction = "STUB -> EN"
+            metadata: dict[str, str] = {"direction": "STUB -> EN"}
+
+            def get_glossary_mappings(self) -> dict[str, str]:
+                return {"stub_term": "STUB_TARGET"}
+
+            def get_style_profile(self) -> StyleProfile:
+                return StyleProfile()
+
+            def is_forbidden(self, _src: str, _tgt: str) -> bool:
+                return False
+
+            def get_forbidden_targets(self) -> dict[str, str]:
+                return {}
+
+            def entity_type_hint(self, _token: str) -> object:
+                return None
+
+            def apply_zh_rules(self, text: str) -> str:
+                return text
+
+            def apply_rules(self, text: str, _direction: str) -> str:
+                return text
+
+            def as_interface(self) -> object:
+                from tra.modules.registry import ModuleInterface
+
+                return ModuleInterface(
+                    name="stub-en",
+                    kind="language",
+                    get_glossary_mappings=self.get_glossary_mappings,
+                    get_style_profile=self.get_style_profile,
+                    apply_rules=self.apply_rules,
+                    metadata={"direction": "STUB -> EN"},
+                )
+
+        stub = StubModule()
+        registry = ModuleRegistry()
+        # Register the stub directly (not via as_interface shim) so the
+        # registry holds the full module object with all ISA-expected methods.
+        registry.register(stub)  # type: ignore[arg-type]
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L1_BASIC,
+                "language_pair": "STUB -> EN",
+            }
+        )
+        # Pass the registry to the kernel.
+        kernel = TRAKernel(cfg, registry=registry)
+        kernel.run("stub_term here\n")
+        # The stub's glossary mapping should appear in the exported artifacts.
+        glossary_path = Path(cfg.compilation_dir) / "glossary.yaml"
+        assert glossary_path.exists(), "glossary.yaml not exported"
+        content = glossary_path.read_text()
+        assert "STUB_TARGET" in content, (
+            "kernel did not use the stub module's glossary — "
+            "registry not wired (TRA-002)"
+        )

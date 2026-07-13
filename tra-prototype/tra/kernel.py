@@ -14,6 +14,7 @@ import json
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -86,6 +87,7 @@ class TRAKernel:
         *,
         interactive: bool = False,
         deterministic: bool = True,
+        registry: object | None = None,
     ) -> None:
         """Initialize the kernel.
 
@@ -96,6 +98,10 @@ class TRAKernel:
                 for the audit trail so two runs of identical source produce
                 byte-identical audit_trace.jsonl (TRA-013). Set to False for
                 production runs that want wall-clock timestamps.
+            registry: Optional ModuleRegistry (TRA-002). If supplied, the
+                kernel selects the language module from the registry based
+                on ``config.language_pair``. If None, falls back to the
+                default ZHENModule (backward compat).
         """
         self.config = config
         self.interactive = interactive
@@ -103,10 +109,9 @@ class TRAKernel:
             config.cache_directory, enabled=config.cache_enabled
         )
         self.evidence = EvidenceRegistry()
+        # TRA-002: select the language module from the registry.
+        module = self._select_module(config.language_pair, registry)
         # Deterministic clock for audit-trail reproducibility (TRA-013).
-        # The clock is seeded lazily from the source hash on the first run()
-        # call; before that, it falls back to a fixed epoch so any audit
-        # records appended at construction time are also deterministic.
         self._deterministic = deterministic
         self._source_hash_seed: str | None = None
         if deterministic:
@@ -115,9 +120,38 @@ class TRAKernel:
             self.audit = AuditTrail(config.audit_trace)
         self.ctx = RuntimeContext(
             configuration=config.model_dump(),
-            style_profile=ZHENModule().get_style_profile(),
+            style_profile=module.get_style_profile(),
+            module=module,
         )
         self.state = KernelState.BOOTSTRAP
+
+    @staticmethod
+    def _select_module(language_pair: str, registry: object | None) -> Any:
+        """Select the language module for the configured pair (TRA-002).
+
+        If a registry is supplied, filter it by language_pair and return the
+        first matching module. Otherwise fall back to ZHENModule.
+        """
+        if registry is not None:
+            # Filter the PASSED registry (don't rebuild from defaults).
+            source_lang = (
+                language_pair.split("->", 1)[0].strip().lower()
+                if "->" in language_pair
+                else ""
+            )
+            for mod in registry.all():  # type: ignore[attr-defined]
+                if getattr(mod, "kind", "") != "language":
+                    continue
+                mod_direction = str(getattr(mod, "metadata", {}).get("direction", ""))
+                mod_source = (
+                    mod_direction.split("->", 1)[0].strip().lower()
+                    if "->" in mod_direction
+                    else ""
+                )
+                if mod_source == source_lang:
+                    return mod
+            # No match in registry; fall through to ZHENModule.
+        return ZHENModule()
 
     def _deterministic_clock(self) -> datetime:
         """Return a deterministic timestamp derived from the source hash.

@@ -198,6 +198,13 @@ class RuntimeContext(BaseModel):
     unresolved_ambiguities: list[str] = Field(default_factory=list)
     execution_log: list[str] = Field(default_factory=list)
     repair_history: list[RepairAttempt] = Field(default_factory=list)
+    # The active language module (TRA-002). ISA functions read ctx.module
+    # instead of the module-level _MODULE singleton. None falls back to the
+    # default ZHENModule (backward compat for direct ISA calls in tests).
+    # Typed as Any because the module contract is structural (duck-typed):
+    # get_glossary_mappings, get_style_profile, is_forbidden,
+    # get_forbidden_targets, entity_type_hint, apply_zh_rules, apply_rules.
+    module: Any = Field(default=None, exclude=True)
 
 
 class RepairAttempt(BaseModel):

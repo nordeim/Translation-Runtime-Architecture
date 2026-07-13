@@ -107,17 +107,18 @@ def test_kernel_audit_trail_on_disk(tmp_path: Path):
 
 
 def test_kernel_records_exception_recovery(tmp_path: Path):
-    from tra import isa
+    from tra.modules.zh_en import ZHENModule
 
     # Force a GLOSSARY_CONFLICT during BUILD_GLOSSARY to exercise the
-    # EXCEPTION_HANDLER recovery path.
-    orig = isa._MODULE.get_glossary_mappings
-    isa._MODULE.get_glossary_mappings = lambda: {"成立": "Valid"}  # drift target
+    # EXCEPTION_HANDLER recovery path. Patch the ZHENModule class so all
+    # instances (including the one the kernel constructs) return the drift.
+    orig = ZHENModule.get_glossary_mappings
+    ZHENModule.get_glossary_mappings = lambda self: {"成立": "Valid"}  # type: ignore[method-assign]
     try:
         k = _kernel(tmp_path)
         k.run(EXAMPLE)
     finally:
-        isa._MODULE.get_glossary_mappings = orig
+        ZHENModule.get_glossary_mappings = orig  # type: ignore[method-assign]
 
     instructions = {r.isa_instruction for r in k.audit._buffer}
     assert "EXCEPTION_HANDLER" in instructions
