@@ -232,8 +232,9 @@ def validate(
     Passes iff zero BLOCKING diagnostics are raised at the conformance LEVEL.
     """
     cfg = BootstrapConfig.from_yaml(ctx.obj["config_path"])
+    # BootstrapConfig is frozen (TRA-018); use model_copy for overrides.
     if level:
-        cfg.conformance_level = _resolve_level(level)
+        cfg = cfg.model_copy(update={"conformance_level": _resolve_level(level)})
 
     report = validate_translation(input_md, output_md, cfg)
 
