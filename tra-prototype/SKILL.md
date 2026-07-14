@@ -53,6 +53,12 @@ instead of failing (TRA-033).
 translation and restored verbatim after, so glossary terms inside backticks
 survive untranslated.
 
+**Structural validation** (TRA-071): `analyze_document` performs a structural
+validation pass that raises `BrokenMarkdown` for unclosed fenced code blocks.
+`markdown-it-py` is too lenient to raise on its own, so without this pass the
+`BrokenMarkdown` recovery procedure (spec §6) was dead code. The validation
+detects odd fence counts (unclosed ``` or ~~~) and raises with the line number.
+
 **Deterministic audit trail** (TRA-013): evidence IDs are content-addressed
 (SHA-256 of the canonical record) and timestamps are derived from the source
 hash, so two runs of identical source produce byte-identical `audit_trace.jsonl`
@@ -94,7 +100,9 @@ Configuration: `config.yaml` (the `tvm_bootstrap` config). Key fields:
 - `base_dir` — root for path-safety validation (TRA-014). All runtime paths
   (`cache_directory`, `compilation_dir`, `audit_trace`) must resolve inside
   `base_dir`; paths containing `..` or absolute paths outside it are rejected
-  at construction. Default `.` (CWD).
+  at construction. Default `.` (CWD). `from_yaml` reads this field from YAML
+  (TRA-047); `BootstrapConfig` uses `extra='forbid'` so typo'd YAML keys raise
+  `ValidationError` instead of being silently ignored.
 
 ---
 
@@ -124,6 +132,15 @@ BLOCKING diagnostics remain after the repair loop, the kernel raises
 `ConformanceFailure` and `translate` exits `1` so a non-conformant output is
 never silently published. At L1/L2, the gate is not enforced (lower
 strictness dials).
+
+Additional L3/L4 gates enforced in-band:
+- **Analyze-failure gate** (TRA-036): if `analyze_document` raises (e.g.
+  `BrokenMarkdown` from an unclosed fence), the kernel raises
+  `ConformanceFailure` at L3/L4 — not silently returns an empty string.
+- **Broken-link gate** (TRA-037): `_rewrite_anchors` runs BEFORE the L3 gate
+  (not after); if any `BROKEN_LINK` entries appear in `unresolved_ambiguities`,
+  the kernel raises `ConformanceFailure`. This also ensures the audit trail's
+  `VERIFY_OUTPUT` hash matches the emitted target (L4 hash-chain integrity).
 
 Writes the translated markdown **plus** runtime artifacts (glossary, entity
 table, structural map, execution log, repair history, audit trace). At L4 it
@@ -216,15 +233,24 @@ See `../TRA-MODULE-ZH-EN.md` for the module-authoring template and
 ```bash
 cd tra-prototype
 . .venv/bin/activate
-ruff format . && ruff check . && ruff format --check . && mypy --strict tra && pytest tests
+ruff format .            # auto-format (pre-step, not a gate)
+ruff check .             # gate 1: lint
+ruff format --check .    # gate 2: format check
+mypy --strict tra        # gate 3: type check (20 source files)
+pytest tests             # gate 4: test suite
 ```
 
-All five must be green. The full suite is **154 tests** across 12 test files,
-including `test_outstanding_findings.py` (TDD regression tests named after
-their finding IDs: TRA-001, 002, 004, 007, 008, 009, 012, 013, 014, 032,
-033, 036, 037, 039, 041, 044, 049, 050, 051, 053, 054). The L3 gate is also
-covered by `test_benchmark.py` (asserts zero `BLOCKING` across the S/F/T/D/E/R
-cases).
+All four gates must be green. The full suite is **174 tests** across 16 test
+files, including:
+- `test_outstanding_findings.py` — TDD regression tests named after finding IDs
+  (TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 032, 033, 036, 037,
+  039, 041, 044, 049, 050, 051, 053, 054)
+- `test_tra043_protocol.py` — LanguageModuleProtocol type-safety tests
+- `test_tra047_config_robustness.py` — BootstrapConfig `from_yaml`/`extra='forbid'` tests
+- `test_tra071_broken_markdown.py` — unclosed-fence structural validation tests
+- `test_e2e_to_translate.py` — E2E tests on `to_translate.md` with manual LLM hijack
+  (12 tests: L3 pipeline, L4 forensics, byte-reproducibility)
+- `test_benchmark.py` — L3 gate coverage (asserts zero `BLOCKING` across S/F/T/D/E/R cases)
 
 ---
 
@@ -236,29 +262,75 @@ cases).
   fluency path and is caller-supplied. Code blocks (fenced and inline) are
   already protected from glossary substitution (TRA-001 partial); full
   per-leaf-segment translation is still deferred.
-- **`structlog`, `litellm`, and `pytest-asyncio` are listed dependencies but
-  unused** — the LLM seam is caller-supplied (never imports litellm) and tests
-  are synchronous.
+- **6 unused dependencies** (TRA-017): `litellm`, `structlog`,
+  `pydantic-settings`, `mdit-py-plugins`, `black`, `pytest-asyncio` are listed
+  in `pyproject.toml` but never imported. `litellm` pulls ~50 transitive
+  packages (openai, tiktoken, tokenizers, huggingface-hub) — heavy install
+  footprint for a rule-based prototype. The LLM seam is caller-supplied (never
+  imports litellm) and tests are synchronous.
 - **No segment-level parallelism** — translation is sequential.
 - **Glossary/entity tables rebuilt per run** — only the translation output is
   cached across runs (diskcache).
 - **Phase 7 (docs/delivery) not started** — see `implementation_plan.md` for
   the full per-item state.
 
-### Behaviors added during the audit remediation (34 of 35 findings fixed)
+### Audit remediation status
 
-- **TRA-008** — internal `[text](#slug)` links are rewritten post-translation
-  to point at the translated heading slugs; broken links are appended to
-  `unresolved_ambiguities`.
-- **TRA-009/006** — terminology severity is policy-driven: CANONICAL term
-  leakage raises `BLOCKING` (Terminological Consistency P4 > Target Fluency
-  P6); CONTEXT_SENSITIVE term leakage stays `WARNING`.
-- **TRA-004** — TRA-EXCEPTIONS are routed through an EXCEPTION_HANDLER path
-  (`tra/recovery.py`) that produces a deterministic `RecoveryReport` per spec
-  §6; reports are written to the audit trail and L4 ambiguity register.
-- **Full audit artifacts** live at `../docs/audit/`
-  (`TRA_Prototype_Audit_Report.docx`, `TRA_audit_findings_register.xlsx`,
-  `TRA_audit_severity_heatmap.png`).
+**Round 1** (35 findings): 30 fixed, 5 carry over (TRA-001 partial, TRA-006
+fixed in Round 2, TRA-016 persistent dead code, TRA-017 persistent unused
+deps, TRA-026 persistent dead config).
+
+**Round 2** (41 findings): 17 fixed in this session, 24 remain. The 17 fixed:
+- **TRA-006** — `PolicyResolver` is now consulted in `verify_output` via
+  `_POLICY_RESOLVER.wins(TERMINOLOGICAL_CONSISTENCY, TARGET_FLUENCY)`. Severity
+  is no longer hard-coded; monkeypatching the resolver changes the diagnostic
+  severity.
+- **TRA-036** — analyze-failure at L3/L4 raises `ConformanceFailure` (was
+  silently returning `""`).
+- **TRA-037** — `_rewrite_anchors` runs BEFORE the L3 gate; `BROKEN_LINK`
+  entries in `unresolved_ambiguities` raise `ConformanceFailure`.
+- **TRA-039** — `build_entity_table` wrapped in `try/except TRAException →
+  _recover(exc)` (was unwrapped, latent crash).
+- **TRA-041** — `GLOSSARY_CONFLICT` recovery populates `ctx.glossary_cache`
+  with first-occurrence mappings before raising (was leaving it empty).
+- **TRA-043** — `LanguageModuleProtocol` defined in `modules/base.py`;
+  `RuntimeContext.module` retyped from `Any` to `LanguageModuleProtocol | None`.
+- **TRA-044** — `route_exception` has an explicit `isinstance(exc, Unrecoverable)`
+  branch returning `BLOCKING + HALT` (was falling through to `WARNING +
+  PRESERVE_SOURCE`).
+- **TRA-045** — removed dead `CONCLUSION_LEADING` constant from `zh_en.py`.
+- **TRA-046** — renamed `_hash_sorted` → `_hash_canonical_json` (was misleadingly
+  named; does not sort lists).
+- **TRA-047** — `from_yaml` reads `base_dir`; `BootstrapConfig` has
+  `extra='forbid'` (was silently ignoring typo'd keys).
+- **TRA-048** — strengthened LLM-degradation test to assert exactly one
+  `TRANSLATE_SEGMENT` audit record (was only checking `degraded` truthy).
+- **TRA-049** — same-state kernel transition now raises (was silently allowed).
+- **TRA-050** — cache-key content sensitivity tested (different glossary/entity
+  → different key).
+- **TRA-051** — `cache.invalidate(pattern)` fnmatch branch tested.
+- **TRA-053** — inline-code protection branch tested.
+- **TRA-054** — L3 `ConformanceFailure` raise branch tested.
+- **TRA-071** — structural validation raises `BrokenMarkdown` for unclosed fences
+  (was unreachable because `markdown-it-py` is too lenient).
+
+**Remaining 24 Round 2 findings** (not yet fixed): TRA-001 (partial, full
+per-leaf segment translation), TRA-016 (dead `count_blocking` stub), TRA-017
+(unused deps), TRA-026 (dead `cache.expire` config), TRA-038 (3 of 5 exception
+types never raised), TRA-040 (EXCEPTION_HANDLER/HALT_ERROR not KernelStates),
+TRA-042 (structural verification heading-count-only), TRA-052/055/056/057/058
+(test coverage gaps), TRA-059/060/061/062/063/064/065/066/067/068/069/070 (doc
+staleness + minor code quality). See `../docs/audit/round2/master_findings_register.json`
+for the full machine-readable register.
+
+### Audit artifacts
+
+- **Round 1**: `../docs/audit/` — `TRA_Prototype_Audit_Report.docx`,
+  `TRA_audit_findings_register.xlsx`, `TRA_audit_severity_heatmap.png`
+- **Round 2**: `../docs/audit/round2/` — `TRA_Prototype_Audit_Report_r2.docx`,
+  `TRA_audit_findings_register_r2.xlsx`, `TRA_audit_severity_heatmap_r2.png`,
+  `master_findings_register.json`, per-track findings (`track_{r,a,b,c,d,e}_findings.md`),
+  `audit_worklog_r2.md`
 
 ---
 
@@ -272,8 +344,11 @@ If asked to "translate" or "certify" a doc with this engine:
 4. **Extend** only via the module registry (`TRAKernel(cfg, registry=registry)`);
    never patch the Kernel/ISA.
 5. **Keep gates green** before committing.
-6. **E2E test** — run `python e2e_test.py` to exercise the full pipeline with a
-   manual LLM-seam hijack (simulates an AI-powered translation end-to-end).
+6. **E2E tests** — two entry points:
+   - `python e2e_test.py` — manual demo script (prints audit trail + verdict)
+   - `pytest tests/test_e2e_to_translate.py` — 12 pytest-collected regression
+     tests (L3 pipeline, L4 forensics, byte-reproducibility) on `to_translate.md`
+   with the `llm_translate` seam hijacked to return `to_translate.en.md`.
 
 The spec is the source of truth for *what* the engine must do; this prototype is
 one *how*.
