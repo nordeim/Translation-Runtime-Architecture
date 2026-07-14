@@ -6,6 +6,7 @@ refactored. Tests are named after their finding ID for traceability.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -224,7 +225,7 @@ class TestTRA007TransitionOrdering:
         from unittest.mock import patch
 
         from tra.config import BootstrapConfig
-        from tra.exceptions import BrokenMarkdown
+        from tra.exceptions import BrokenMarkdown, ConformanceFailure
         from tra.kernel import KernelState, TRAKernel
 
         cfg = BootstrapConfig.from_yaml(
@@ -239,9 +240,12 @@ class TestTRA007TransitionOrdering:
         )
         kernel = TRAKernel(cfg)
         # Monkeypatch analyze_document to raise BrokenMarkdown.
+        # TRA-036: at L3_STRICT (default), the kernel now raises
+        # ConformanceFailure (not BrokenMarkdown) on analyze failure —
+        # suppress both to verify the state invariant.
         with (
             patch("tra.kernel.analyze_document", side_effect=BrokenMarkdown("boom")),
-            contextlib.suppress(BrokenMarkdown),
+            contextlib.suppress(BrokenMarkdown, ConformanceFailure),
         ):
             kernel.run("# test\n")
         # State must NOT have advanced to ANALYZE_DOCUMENT.
@@ -684,3 +688,590 @@ class TestTRA001SegmentLevel:
         )
         # The paragraph's "成立" should be translated to "Confirmed".
         assert "Confirmed" in target, "paragraph term should be translated"
+
+
+# =========================================================================
+# TRA-036 — Analyze-failure early return bypasses the L3 conformance gate
+# =========================================================================
+
+
+class TestTRA036AnalyzeFailureL3Gate:
+    """TRA-036: at L3_STRICT/L4_FORENSIC, an analyze_document failure must
+    raise ConformanceFailure, not silently return an empty string.
+
+    The early `return ""` at kernel.py:214 was added by the TRA-004 fix
+    (route exceptions through _recover). It bypasses the L3 gate at
+    kernel.py:248-261, so a malformed source produces exit 0 with a 0-byte
+    output at L3_STRICT — a silent conformance failure.
+    """
+
+    def test_analyze_failure_raises_conformance_failure_at_l3(
+        self, tmp_path: Path
+    ) -> None:
+        """At L3_STRICT, BrokenMarkdown from analyze_document must raise
+        ConformanceFailure, not return an empty string."""
+        from unittest.mock import patch
+
+        from tra.config import BootstrapConfig
+        from tra.exceptions import BrokenMarkdown, ConformanceFailure
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L3_STRICT,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        with (
+            patch("tra.kernel.analyze_document", side_effect=BrokenMarkdown("boom")),
+            pytest.raises(ConformanceFailure, match=r"BROKEN_MARKDOWN|analyze"),
+        ):
+            kernel.run("# test\n")
+        # The EXCEPTION_HANDLER audit record must still be present (TRA-004 preserved).
+        handler_records = [
+            r for r in kernel.audit._buffer if r.isa_instruction == "EXCEPTION_HANDLER"
+        ]
+        assert handler_records, (
+            "EXCEPTION_HANDLER audit record must still be emitted (TRA-004 preserved)"
+        )
+
+    def test_analyze_failure_returns_empty_at_l1(self, tmp_path: Path) -> None:
+        """At L1_BASIC, the existing behavior (return '') is preserved —
+        L1/L2 do not require zero-BLOCKING (lower strictness dials)."""
+        from unittest.mock import patch
+
+        from tra.config import BootstrapConfig
+        from tra.exceptions import BrokenMarkdown
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L1_BASIC,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        with patch("tra.kernel.analyze_document", side_effect=BrokenMarkdown("boom")):
+            result = kernel.run("# test\n")
+        assert result == "", (
+            "L1 should return empty string on analyze failure (no gate)"
+        )
+
+
+# =========================================================================
+# TRA-039 — build_entity_table not wrapped in try/except (latent crash)
+# =========================================================================
+
+
+class TestTRA039BuildEntityTableWrapped:
+    """TRA-039: build_entity_table at kernel.py:230 was not wrapped in
+    try/except TRAException → self._recover(exc), unlike build_glossary
+    at line 226-229. If build_entity_table ever raises EntityAmbiguity
+    (e.g., after the TRA-038 fix adds the raise), the kernel would crash
+    with an unhandled exception — no EXCEPTION_HANDLER audit record.
+
+    Spec §3 BUILD_ENTITY_TABLE Failure Condition: ENTITY_AMBIGUITY.
+    """
+
+    def test_build_entity_table_routes_through_exception_handler(
+        self, tmp_path: Path
+    ) -> None:
+        """If build_entity_table raises EntityAmbiguity, the kernel must
+        route it through _recover (EXCEPTION_HANDLER audit record), not
+        propagate the exception uncaught."""
+        from unittest.mock import patch
+
+        from tra.config import BootstrapConfig
+        from tra.exceptions import EntityAmbiguity
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L1_BASIC,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        # Patch build_entity_table to raise EntityAmbiguity.
+        # Use L1_BASIC so the kernel doesn't raise ConformanceFailure
+        # (we're testing the exception routing, not the L3 gate).
+        with (
+            patch("tra.kernel.build_entity_table", side_effect=EntityAmbiguity("boom")),
+            contextlib.suppress(Exception),
+        ):
+            # Downstream failures are OK — we're testing that
+            # EntityAmbiguity is caught and routed, not that the
+            # pipeline completes.
+            kernel.run("# test heading\n\nsome text\n")
+        handler_records = [
+            r for r in kernel.audit._buffer if r.isa_instruction == "EXCEPTION_HANDLER"
+        ]
+        assert handler_records, (
+            "expected an EXCEPTION_HANDLER audit record for EntityAmbiguity — "
+            "build_entity_table must be wrapped in try/except (TRA-039)"
+        )
+        # The record should reference ENTITY_AMBIGUITY.
+        assert handler_records[0].input_hash == "ENTITY_AMBIGUITY" or (
+            handler_records[0]
+            .artifact_snapshot.get("detail", "")
+            .startswith("ENTITY_AMBIGUITY")
+        ), (
+            f"EXCEPTION_HANDLER record should reference ENTITY_AMBIGUITY, got: "
+            f"{handler_records[0].artifact_snapshot}"
+        )
+
+
+# =========================================================================
+# TRA-041 — GLOSSARY_CONFLICT recovery must set the first-occurrence mapping
+# =========================================================================
+
+
+class TestTRA041GlossaryConflictSetsCanonical:
+    """TRA-041: when build_glossary raises GlossaryConflict, the kernel's
+    _recover path records the exception but does NOT populate ctx.glossary_cache
+    with the first-occurrence canonical mapping. The kernel continues with an
+    empty glossary, so translate_segment has no terminology substitutions and
+    verify_output's terminology check iterates an empty list — no BLOCKING
+    diagnostics. The L3 gate passes silently despite the glossary being missing.
+
+    Spec §6 GLOSSARY_CONFLICT recovery: "Log as Blocking Error. Use first
+    occurrence as canonical. Flag subsequent occurrences for manual review."
+    The implementation logs + flags but does NOT set the first occurrence as
+    canonical — the USE_FIRST_OCCURRENCE action label is not enforced.
+    """
+
+    def test_glossary_cache_populated_after_conflict_recovery(
+        self, tmp_path: Path
+    ) -> None:
+        """After a GlossaryConflict is recovered, ctx.glossary_cache must
+        contain the first-occurrence canonical mapping (not be empty)."""
+
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L1_BASIC,
+            }
+        )
+        kernel = TRAKernel(cfg)
+
+        # Get the real module's glossary mappings, then patch to introduce
+        # a conflict: same source term maps to two different targets.
+        real_module = kernel.ctx.module
+        real_mappings = real_module.get_glossary_mappings()
+        # Build a conflicting mappings dict: same key, different value.
+        # Take the first key and override its value to create a conflict
+        # when build_glossary iterates. We do this by making get_glossary_mappings
+        # return a dict where the same source appears twice (which is impossible
+        # for a real dict, so we patch is_forbidden to trigger the conflict path).
+        # Simpler: patch get_glossary_mappings to return a dict, then patch
+        # is_forbidden to return True for one entry — that triggers the
+        # GlossaryConflict raise at isa.py:187.
+
+        # Use the real mappings but force is_forbidden to True for one entry
+        # that is NOT the first — so entries collected before the conflict
+        # (the first-occurrence canonical mappings) are non-empty.
+        all_sources = list(real_mappings.keys())
+        # Pick the second source (or last if only one) so the first entry
+        # is collected before the conflict triggers.
+        conflict_source = all_sources[1] if len(all_sources) > 1 else all_sources[0]
+
+        class ConflictModule:
+            """Wrapper that forces is_forbidden=True for one source to
+            trigger GlossaryConflict in build_glossary."""
+
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def is_forbidden(self, src, tgt):
+                # Force a conflict on the chosen source term.
+                if src == conflict_source:
+                    return True
+                return self._real.is_forbidden(src, tgt)
+
+        conflict_module = ConflictModule(real_module)
+        kernel.ctx.module = conflict_module
+
+        # Run the kernel. The GlossaryConflict should be raised in build_glossary,
+        # routed through _recover, and the kernel should continue with a
+        # glossary_cache that contains the first-occurrence canonical mapping
+        # (the entries collected BEFORE the conflict).
+        with contextlib.suppress(Exception):
+            # Downstream failures are OK — we're testing that the glossary
+            # is populated with first-occurrence mappings, not that the
+            # pipeline completes.
+            kernel.run("# test heading\n\nsome text\n")
+
+        # TRA-041: glossary_cache must NOT be empty after conflict recovery.
+        # The entries collected before the conflict (the first occurrence)
+        # must be preserved as the canonical mapping.
+        assert kernel.ctx.glossary_cache, (
+            "glossary_cache is empty after GlossaryConflict recovery — "
+            "the first-occurrence canonical mapping must be preserved (TRA-041)"
+        )
+
+
+# =========================================================================
+# TRA-037 — _rewrite_anchors runs AFTER the L3 gate; audit trail hash mismatch
+# =========================================================================
+
+
+class TestTRA037RewriteAnchorsBeforeGate:
+    """TRA-037: _rewrite_anchors was called AFTER the L3 gate, so (a) the
+    audit trail's VERIFY_OUTPUT hash was computed on the pre-rewrite target
+    while the emitted target was post-rewrite (L4 hash-chain integrity
+    broken), and (b) BROKEN_LINK entries in unresolved_ambiguities were
+    never checked by the L3 gate (silent pass on broken internal links).
+
+    Fix: move _rewrite_anchors to BEFORE the L3 gate, and add a BROKEN_LINK
+    check to the L3+ gate.
+    """
+
+    def test_broken_internal_link_raises_conformance_failure_at_l3(
+        self, tmp_path: Path
+    ) -> None:
+        """A source with a link to a non-existent heading must raise
+        ConformanceFailure at L3_STRICT (BROKEN_LINK in unresolved_ambiguities)."""
+        from tra.config import BootstrapConfig
+        from tra.exceptions import ConformanceFailure
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L3_STRICT,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        # Source has a link to #nonexistent, which has no matching heading.
+        source = "# Real Heading\n\nSee [broken link](#nonexistent).\n"
+        with pytest.raises(ConformanceFailure, match=r"BROKEN_LINK|conformant"):
+            kernel.run(source)
+
+    def test_audit_trail_hash_matches_emitted_target_at_l4(
+        self, tmp_path: Path
+    ) -> None:
+        """At L4, the audit trail's VERIFY_OUTPUT input_hash must match the
+        hash of the actually-emitted target (post-rewrite). L4 hash-chain
+        integrity requires this."""
+        import hashlib
+
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L4_FORENSIC,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        # Source with a valid internal link (heading exists, link resolves).
+        # Uses pure-English heading so the whole-doc translator doesn't mangle
+        # the link target (TRA-070 CJK mangling is out of scope for TRA-037).
+        # The link IS rewritten by _rewrite_anchors (TRA-008), so this test
+        # verifies the audit trail hashes the post-rewrite target.
+        source = "# Introduction\n\nSee [intro](#introduction).\n"
+        target = kernel.run(source)
+        # Find the LAST VERIFY_OUTPUT audit record (the L3 gate's verify,
+        # which now runs AFTER _rewrite_anchors per the TRA-037 fix).
+        verify_records = [
+            r for r in kernel.audit._buffer if r.isa_instruction == "VERIFY_OUTPUT"
+        ]
+        assert verify_records, "expected at least one VERIFY_OUTPUT audit record"
+        last_verify = verify_records[-1]
+        # The audit record's input_hash should match the SHA-256 of the
+        # emitted target (the post-rewrite target the kernel returns).
+        emitted_hash = hashlib.sha256(target.encode("utf-8")).hexdigest()[:16]
+        assert last_verify.input_hash == emitted_hash, (
+            f"audit trail VERIFY_OUTPUT hash {last_verify.input_hash!r} does not "
+            f"match emitted target hash {emitted_hash!r} — L4 hash-chain integrity "
+            f"broken (TRA-037)"
+        )
+
+
+# =========================================================================
+# TRA-049 — Same-state kernel transition untested
+# =========================================================================
+
+
+class TestTRA049SameStateTransition:
+    """TRA-049: kernel._transition used `if idx < current_idx` (backward
+    only); same-state transitions (idx == current_idx) were silently allowed.
+    Mutation testing confirmed changing `<` to `<=` left all tests green.
+
+    The spec §2.1 implies forward-only progression. We enforce strict forward
+    (same-state transitions raise TRAException).
+    """
+
+    def test_same_state_transition_raises(self, tmp_path: Path) -> None:
+        """Calling _transition with the current state must raise (strict forward)."""
+        from tra.config import BootstrapConfig
+        from tra.exceptions import TRAException
+        from tra.kernel import KernelState, TRAKernel
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+            }
+        )
+        kernel = TRAKernel(cfg)
+        # Advance to INITIALIZE_RUNTIME, then try same-state transition.
+        kernel._transition(KernelState.INITIALIZE_RUNTIME)
+        assert kernel.state == KernelState.INITIALIZE_RUNTIME
+        with pytest.raises(TRAException, match=r"Illegal|same.state|backward"):
+            kernel._transition(KernelState.INITIALIZE_RUNTIME)
+
+
+# =========================================================================
+# TRA-050 — Cache-key content sensitivity untested
+# =========================================================================
+
+
+class TestTRA050CacheKeyContentSensitivity:
+    """TRA-050: cache key must include glossary and entity content. Mutation
+    testing confirmed dropping entity_hash/glossary_hash from the key left
+    all tests green. This test verifies different glossaries produce different
+    cache keys (so a cache hit cannot cross glossary boundaries).
+    """
+
+    def test_different_glossary_produces_different_cache_key(self) -> None:
+        """Two CacheKeyContexts with different glossaries must produce
+        different cache keys (cache cannot cross glossary boundaries)."""
+        from tra.cache import CacheKeyContext
+        from tra.memory import GlossaryEntry, GlossaryStatus
+
+        glossary_a = [
+            GlossaryEntry(
+                source="成立", target="Confirmed", status=GlossaryStatus.CANONICAL
+            )
+        ]
+        glossary_b = [
+            GlossaryEntry(
+                source="成立", target="Valid", status=GlossaryStatus.CANONICAL
+            )
+        ]
+        ctx_a = CacheKeyContext(
+            source_text="test",
+            glossary=glossary_a,
+            model_endpoint="rule-based",
+            model_version="v1",
+        )
+        ctx_b = CacheKeyContext(
+            source_text="test",
+            glossary=glossary_b,
+            model_endpoint="rule-based",
+            model_version="v1",
+        )
+        assert ctx_a.key() != ctx_b.key(), (
+            "different glossary content must produce different cache keys — "
+            "a cache hit cannot cross glossary boundaries (TRA-050)"
+        )
+
+    def test_different_entity_produces_different_cache_key(self) -> None:
+        """Two CacheKeyContexts with different entities must produce
+        different cache keys."""
+        from tra.cache import CacheKeyContext
+        from tra.memory import Entity, EntityType
+
+        entities_a = [Entity(name="RustVMM", type=EntityType.PRODUCT)]
+        entities_b = [Entity(name="KVM", type=EntityType.PRODUCT)]
+        ctx_a = CacheKeyContext(
+            source_text="test",
+            entities=entities_a,
+            model_endpoint="rule-based",
+            model_version="v1",
+        )
+        ctx_b = CacheKeyContext(
+            source_text="test",
+            entities=entities_b,
+            model_endpoint="rule-based",
+            model_version="v1",
+        )
+        assert ctx_a.key() != ctx_b.key(), (
+            "different entity content must produce different cache keys (TRA-050)"
+        )
+
+
+# =========================================================================
+# TRA-051 — cache.invalidate(pattern) fnmatch branch untested
+# =========================================================================
+
+
+class TestTRA051CacheInvalidatePattern:
+    """TRA-051: cache.invalidate(pattern) uses fnmatch to glob-match keys.
+    The TRA-011 fix changed from literal-key deletion to fnmatch, but no
+    test exercises the --pattern branch. A regression reverting to literal
+    deletion would pass all tests.
+    """
+
+    def test_cache_invalidate_pattern_deletes_only_matching(
+        self, tmp_path: Path
+    ) -> None:
+        """cache.invalidate(pattern) must delete only keys matching the
+        fnmatch glob, leaving non-matching keys intact."""
+        from tra.cache import TranslationCache, TranslationResult
+
+        cache = TranslationCache(tmp_path / "cache", enabled=True)
+        # Populate with 3 keys: foo, bar, baz.
+        for key in ["translation:foo", "translation:bar", "translation:baz"]:
+            cache.set(
+                key,
+                TranslationResult(translation="x", evidence_ids=[], cache_hit=False),
+            )
+        # Invalidate keys matching 'translation:ba*' (should delete bar + baz).
+        deleted = cache.invalidate("translation:ba*")
+        assert deleted == 2, f"expected 2 deletions, got {deleted}"
+        # foo must remain.
+        assert cache.get("translation:foo") is not None, (
+            "non-matching key was deleted — fnmatch glob is wrong (TRA-051)"
+        )
+        # bar and baz must be gone.
+        assert cache.get("translation:bar") is None
+        assert cache.get("translation:baz") is None
+
+
+# =========================================================================
+# TRA-053 — Inline-code protection branch in _execute_translation untested
+# =========================================================================
+
+
+class TestTRA053InlineCodeProtection:
+    """TRA-053: kernel._execute_translation protects inline code (backticks)
+    from glossary substitution. The S-03 benchmark exercises fenced code
+    blocks but not inline code. A regression removing the inline-code
+    branch would pass all tests.
+    """
+
+    def test_inline_code_glossary_term_survives_untranslated(
+        self, tmp_path: Path
+    ) -> None:
+        """A glossary term inside inline code (backticks) must survive
+        untranslated in the output."""
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L1_BASIC,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        # Source with inline code containing a glossary term.
+        source = "The term `成立` is in inline code.\n"
+        target = kernel.run(source)
+        # The inline-code `成立` must survive verbatim (not translated to "Confirmed").
+        assert "`成立`" in target, (
+            f"inline-code glossary term was translated — _execute_translation "
+            f"inline-code protection broken (TRA-053). Got: {target!r}"
+        )
+        assert "Confirmed" not in target, (
+            f"glossary term leaked out of inline code — got: {target!r}"
+        )
+
+
+# =========================================================================
+# TRA-054 — L3 ConformanceFailure raise branch untested
+# =========================================================================
+
+
+class TestTRA054L3ConformanceFailureRaiseBranch:
+    """TRA-054: the L3 in-band gate (kernel.py:274-300) raises
+    ConformanceFailure when BLOCKING diagnostics remain after the repair
+    loop. No test exercises this raise branch — all L3 tests use inputs
+    that pass the gate. A regression removing the raise would pass all tests.
+    """
+
+    def test_l3_gate_raises_conformance_failure_on_blocking(
+        self, tmp_path: Path
+    ) -> None:
+        """At L3_STRICT, if verify_output returns BLOCKING diagnostics after
+        the repair loop, the kernel must raise ConformanceFailure."""
+        from unittest.mock import patch
+
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import Diagnostic
+        from tra.exceptions import ConformanceFailure
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel, Severity
+
+        cfg = BootstrapConfig.from_yaml(
+            str(Path(__file__).resolve().parent.parent / "config.yaml")
+        ).model_copy(
+            update={
+                "base_dir": str(tmp_path),
+                "audit_trace": str(tmp_path / "audit.jsonl"),
+                "compilation_dir": str(tmp_path / "artifacts"),
+                "cache_directory": str(tmp_path / "cache"),
+                "conformance_level": ConformanceLevel.L3_STRICT,
+            }
+        )
+        kernel = TRAKernel(cfg)
+
+        # Patch verify_output to always return a BLOCKING diagnostic.
+        blocking_diag = Diagnostic(
+            severity=Severity.BLOCKING,
+            subsystem="entity",
+            issue="Entity not preserved: 'TestEntity'",
+            evidence="expected verbatim occurrence",
+            action="Restore entity",
+        )
+        with (
+            patch("tra.kernel.verify_output", return_value=[blocking_diag]),
+            pytest.raises(ConformanceFailure, match=r"BLOCKING"),
+        ):
+            kernel.run("# test\n")

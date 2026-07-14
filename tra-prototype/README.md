@@ -15,7 +15,7 @@ override the rule path for fluent phrasing with graceful degradation.
 ```bash
 cd tra-prototype
 python -m venv .venv && . .venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"   # [dev] required for ruff/mypy/pytest quality gates
 ```
 
 ## Commands
@@ -73,8 +73,9 @@ mypy --strict tra
 
 - **LLM seam** (`translate_segment(..., llm_translate=...)`) is wired but not
   called — phrasing is rule-based (e.g. "may Confirmed" reads literally).
-- **Inline-code glossary substitution** is not yet suppressed (S-03): terms
-  inside backticks are still run through the glossary.
+- **Inline-code glossary substitution** IS now suppressed (TRA-001 partial):
+  fenced and inline code blocks are protected as no-translate zones. Full
+  per-leaf segment translation is still deferred.
 - **`structlog`** is a listed dependency but the engine uses the plain
   `AuditTrail` (no structured/correlation-ID logging) — Phase 6.3.1 open.
 - **Segment-level parallelism** (`asyncio`) is not implemented — Phase 6.5.1
@@ -85,13 +86,27 @@ mypy --strict tra
 - **Phase 7** (ADRs, API reference, module authoring guide, conformance
   self-audit) has not started.
 - **TRANSLATE_SEGMENT** currently operates on the whole document rather than
-  per leaf segment; the kernel passes the full source to `translate_segment`.
-  This affects cache granularity, `RepairAttempt.segment_index`, and the L4
-  line-by-line trace (see `docs/audit/` for the full audit report).
-- **Module registry** is the sanctioned extension point but the kernel
-  currently hard-codes `ZHENModule()` — registered modules are not yet picked
-  up by `tra_cli.py translate`.
+  per leaf segment (TRA-001 partial); the kernel passes the full source to
+  `translate_segment`. This affects cache granularity,
+  `RepairAttempt.segment_index`, and the L4 line-by-line trace.
+- **Module registry** (TRA-002, fixed in kernel): the kernel now selects the
+  language module from the registry when supplied (`TRAKernel(cfg, registry=)`);
+  however, `tra_cli.py translate` does not yet pass a registry, so the CLI
+  still falls back to `ZHENModule`.
+- **Exception recovery** (TRA-004, partial): `BrokenMarkdown` and
+  `EntityAmbiguity` now route through `_recover`; however,
+  `UnknownTerm`/`CertaintyConflict`/`EntityAmbiguity` are still never raised
+  in production code paths (TRA-038).
+- **Policy Engine scaffolding** (TRA-006, half-fix): terminology severity is
+  now policy-aware but `PolicyResolver` is never invoked in production
+  `verify_output`.
+- **Dependency hygiene** (TRA-017): `litellm`, `structlog`,
+  `pydantic-settings`, `mdit-py-plugins`, `black`, `pytest-asyncio` are listed
+  but unused.
+- **Benchmark coverage** (TRA-031, improved): 22 of 24 spec cases implemented
+  (S-03 and E-03 still missing); spec target is 100+.
 
-See `docs/audit/TRA_audit_findings_register.xlsx` for the full 35-finding
-audit register and `docs/audit/TRA_Prototype_Audit_Report.docx` for the
-narrative report.
+See `docs/audit/round2/TRA_audit_findings_register_r2.xlsx` for the full
+41-finding Round 2 audit register and
+`docs/audit/round2/TRA_Prototype_Audit_Report_r2.docx` for the narrative
+report. Round 1 deliverables are in `docs/audit/` (top level).

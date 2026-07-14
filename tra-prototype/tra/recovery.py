@@ -23,6 +23,7 @@ from .exceptions import (
     GlossaryConflict,
     TRAException,
     UnknownTerm,
+    Unrecoverable,
 )
 from .memory import Severity
 
@@ -172,6 +173,20 @@ def route_exception(
     if isinstance(exc, GlossaryConflict):
         return recover_glossary_conflict(
             exc.term, canonical_target or exc.canonical_target, ctx_ambiguities
+        )
+    # TRA-044: Unrecoverable must HALT with BLOCKING severity. Previously it
+    # fell through to the generic WARNING + PRESERVE_SOURCE fallback, which
+    # silently downgraded an unrecoverable failure — an L4 audit trail with
+    # only an Unrecoverable would incorrectly report l3_conformant=True.
+    # Spec §6 mandates UNRECOVERABLE halts the pipeline with BLOCKING.
+    if isinstance(exc, Unrecoverable):
+        return RecoveryReport(
+            code=Unrecoverable.code,
+            severity=Severity.BLOCKING,
+            action=RecoveryAction.HALT,
+            detail=str(exc)
+            or "Unrecoverable: repair cannot proceed without "
+            "violating a higher-priority policy.",
         )
     return _emit(
         ctx_ambiguities,

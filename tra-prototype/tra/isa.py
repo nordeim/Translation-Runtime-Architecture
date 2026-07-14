@@ -184,12 +184,20 @@ def build_glossary(
 
     for src, tgt in mappings.items():
         if mod.is_forbidden(src, tgt):
+            # TRA-041: populate ctx.glossary_cache with entries collected
+            # so far (the first-occurrence canonical mappings) BEFORE
+            # raising, so the kernel's _recover path can still access them.
+            # Spec §6 GLOSSARY_CONFLICT: "Use first occurrence as canonical.
+            # Flag subsequent occurrences for manual review."
+            ctx.glossary_cache = entries
             raise GlossaryConflict(
                 f"CONFLICTING_MAPPINGS: {src!r} -> {tgt!r} is a known drift",
                 term=src,
                 canonical_target="",
             )
         if src in seen and seen[src] != tgt:
+            # TRA-041: same — preserve first-occurrence mappings before raise.
+            ctx.glossary_cache = entries
             raise GlossaryConflict(
                 f"CONFLICTING_MAPPINGS: {src!r} maps to both {seen[src]!r} and {tgt!r}",
                 term=src,

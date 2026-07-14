@@ -83,6 +83,20 @@ def test_graceful_degradation_on_llm_failure():
     # Degradation is recorded on the audit trail.
     degraded = [r for r in audit._buffer if r.artifact_snapshot.get("degraded")]
     assert degraded, "expected a degraded artifact snapshot on the audit trail"
+    # TRA-048: exactly ONE TRANSLATE_SEGMENT audit record must exist for the
+    # degraded segment. The early `return result` in isa.py:393 prevents a
+    # second non-degraded record from being emitted. Without that early
+    # return, a second record (without the degraded flag) would appear —
+    # an auditor inspecting only the last record per segment would miss the
+    # degradation. This test catches that mutation.
+    translate_records = [
+        r for r in audit._buffer if r.isa_instruction == "TRANSLATE_SEGMENT"
+    ]
+    assert len(translate_records) == 1, (
+        f"expected exactly 1 TRANSLATE_SEGMENT audit record on LLM degradation, "
+        f"got {len(translate_records)} — the early return in isa.py "
+        f"(TRA-015 fix) must prevent a second non-degraded record (TRA-048)"
+    )
 
 
 def test_sanitize_strips_control_and_bidi():

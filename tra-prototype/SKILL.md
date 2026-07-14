@@ -219,11 +219,12 @@ cd tra-prototype
 ruff format . && ruff check . && ruff format --check . && mypy --strict tra && pytest tests
 ```
 
-All five must be green. The full suite is **141 tests** across 14 test files,
+All five must be green. The full suite is **154 tests** across 12 test files,
 including `test_outstanding_findings.py` (TDD regression tests named after
 their finding IDs: TRA-001, 002, 004, 007, 008, 009, 012, 013, 014, 032,
-033). The L3 gate is also covered by `test_benchmark.py` (asserts zero
-`BLOCKING` across the S/F/T/D/E/R cases).
+033, 036, 037, 039, 041, 044, 049, 050, 051, 053, 054). The L3 gate is also
+covered by `test_benchmark.py` (asserts zero `BLOCKING` across the S/F/T/D/E/R
+cases).
 
 ---
 

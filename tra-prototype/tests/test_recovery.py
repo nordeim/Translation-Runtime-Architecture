@@ -94,3 +94,33 @@ def test_route_exception_falls_back_for_unknown():
     amb: list[str] = []
     rep = route_exception(BrokenMarkdown(), amb)  # type: ignore[arg-type]
     assert isinstance(rep, RecoveryReport)
+
+
+# =========================================================================
+# TRA-044 — route_exception must handle Unrecoverable as BLOCKING + HALT
+# =========================================================================
+
+
+def test_route_exception_unrecoverable_is_blocking_halt():
+    """TRA-044: Unrecoverable exceptions must route to BLOCKING severity and
+    HALT action, not fall through to the WARNING + PRESERVE_SOURCE default.
+
+    The spec §6 mandates that UNRECOVERABLE halts the pipeline with BLOCKING
+    severity. Previously, route_exception had no isinstance(exc, Unrecoverable)
+    branch, so Unrecoverable fell through to the generic fallback (WARNING +
+    PRESERVE_SOURCE) — an L4 audit trail with only an Unrecoverable would
+    incorrectly report l3_conformant=True.
+    """
+    from tra.exceptions import Unrecoverable
+
+    amb: list[str] = []
+    rep = route_exception(Unrecoverable("UNRECOVERABLE: structural repair"), amb)
+    assert rep.severity == Severity.BLOCKING, (
+        f"Unrecoverable must be BLOCKING, got {rep.severity} — "
+        f"silently downgrading to WARNING is a spec violation (TRA-044)"
+    )
+    assert rep.action == RecoveryAction.HALT, (
+        f"Unrecoverable must HALT, got {rep.action} — PRESERVE_SOURCE is "
+        f"wrong for an unrecoverable failure (TRA-044)"
+    )
+    assert rep.code == "UNRECOVERABLE"

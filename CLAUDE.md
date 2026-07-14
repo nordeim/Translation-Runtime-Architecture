@@ -44,16 +44,15 @@ ruff format . && ruff check . && mypy --strict tra && pytest tests
 - `structlog` is a listed dependency but the engine uses the plain `AuditTrail` (no structured/correlation-ID logging — 6.3.1 open).
 - No `asyncio` segment-level parallelism (6.5.1 open).
 - Glossary/entity tables are rebuilt per run; only the translation output is cached across runs via diskcache (6.5.2 open).
-- **Segment-level granularity (TRA-001):** `TRANSLATE_SEGMENT` currently operates on the whole document rather than per leaf segment; the kernel passes the full source to `translate_segment`. Affects cache granularity, `RepairAttempt.segment_index`, and the L4 line-by-line trace.
-- **Module registry bypassed (TRA-002):** the kernel hard-codes `ZHENModule()` instead of routing through `build_default_registry()`; registered modules are not yet picked up by `tra_cli.py translate`.
-- **Exception recovery (TRA-004):** only `GlossaryConflict` and `Unrecoverable` reach `route_exception`; `BrokenMarkdown` propagates uncaught through the kernel, and `UnknownTerm`/`CertaintyConflict`/`EntityAmbiguity` are never raised in production code paths.
-- **Policy Engine scaffolding (TRA-006):** `PolicyResolver` is defined and tested but never invoked in production; `verify_output` does not consult the 6-priority stack for arbitration.
-- **Audit trail reproducibility (TRA-013):** `uuid4` evidence IDs + `datetime.now(UTC)` timestamps make `audit_trace.jsonl` non-byte-reproducible across runs — undermines L4 forensic hashing.
-- **Dependency hygiene (TRA-017):** `litellm`, `structlog`, `pydantic-settings`, `mdit-py-plugins`, `black`, `pytest-asyncio` are listed but unused.
+- **Segment-level granularity (TRA-001, partial):** `TRANSLATE_SEGMENT` currently operates on the whole document rather than per leaf segment; the kernel passes the full source to `translate_segment`. Code-block (fenced + inline) no-translate zone protection IS implemented, but full per-leaf segment translation is deferred. Affects cache granularity, `RepairAttempt.segment_index`, and the L4 line-by-line trace.
+- **Module registry (TRA-002, fixed in kernel; CLI gap):** the kernel now selects the language module from the registry when supplied (`TRAKernel(cfg, registry=registry)`); however, `tra_cli.py translate` does not yet pass a registry, so the CLI still falls back to `ZHENModule`. Registered modules are picked up by the kernel API but not by the CLI.
+- **Exception recovery (TRA-004, partial):** `BrokenMarkdown` now routes through `_recover` (EXCEPTION_HANDLER); `build_entity_table` is wrapped in try/except (TRA-039). However, `UnknownTerm`/`CertaintyConflict`/`EntityAmbiguity` are still never raised in production code paths (TRA-038) — their recovery procedures are defined but unreachable.
+- **Policy Engine scaffolding (TRA-006, half-fix):** terminology severity is now policy-aware (CANONICAL→BLOCKING, CONTEXT_SENSITIVE→WARNING) but is achieved by hard-coded conditionals, not by `PolicyResolver` arbitration. `PolicyResolver` is defined and tested but never invoked in production `verify_output`.
+- **Dependency hygiene (TRA-017, persistent):** `litellm`, `structlog`, `pydantic-settings`, `mdit-py-plugins`, `black`, `pytest-asyncio` are listed but unused.
 - **Phase 7 (documentation & delivery)** has not started: no ADRs, no API reference, no module authoring guide, no conformance self-audit.
-- **Benchmark coverage (TRA-031):** 13 of 23 spec cases implemented (S-01..S-04, S-06, D-01..D-03, E-01, E-03 missing); spec target is 100+.
+- **Benchmark coverage (TRA-031, improved):** 22 of 24 spec cases implemented (S-03 and E-03 still missing); spec target is 100+.
 
-The full 35-finding audit register is in `docs/audit/TRA_audit_findings_register.xlsx`; the narrative report is `docs/audit/TRA_Prototype_Audit_Report.docx`.
+The full 41-finding Round 2 audit register is in `docs/audit/round2/TRA_audit_findings_register_r2.xlsx`; the narrative report is `docs/audit/round2/TRA_Prototype_Audit_Report_r2.docx`. Round 1 deliverables are in `docs/audit/` (top level).
 
 ## The mental model (requires reading multiple files)
 

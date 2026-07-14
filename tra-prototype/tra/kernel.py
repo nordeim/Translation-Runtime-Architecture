@@ -175,9 +175,15 @@ class TRAKernel:
             raise TRAException(f"Illegal state: {next_state}")
         # Strictly forward through the canonical order.
         idx = _KERNEL_ORDER.index(next_state)
-        if idx < _KERNEL_ORDER.index(self.state):
+        # TRA-049: same-state transitions (idx == current) are illegal.
+        # The spec §2.1 implies forward-only progression; allowing same-state
+        # transitions was a silent no-op that masked bugs. Mutation testing
+        # confirmed changing `<` to `<=` left all tests green — this strict
+        # forward enforcement closes that gap.
+        if idx <= _KERNEL_ORDER.index(self.state):
             raise TRAException(
-                f"Illegal backward transition: {self.state} -> {next_state}"
+                f"Illegal backward or same-state transition: "
+                f"{self.state} -> {next_state}"
             )
         self.state = next_state
         self.ctx.execution_log.append(next_state.value)
@@ -208,9 +214,24 @@ class TRAKernel:
             self._recover(exc)
             # analyze_document failed; cannot continue the pipeline. The
             # state stays at INITIALIZE_RUNTIME (TRA-007). Flush the audit
-            # trail so the EXCEPTION_HANDLER record is persisted, then return
-            # an empty target — the caller's L3 gate will reject it.
+            # trail so the EXCEPTION_HANDLER record is persisted.
             self.audit.flush()
+            # TRA-036: at L3_STRICT/L4_FORENSIC, an analyze failure is a
+            # conformance failure — the empty output is not L3-conformant.
+            # The early `return ""` (TRA-004 fix) bypassed the L3 gate at
+            # kernel.py:248-261, so a malformed source produced exit 0 with
+            # a 0-byte output at L3_STRICT — a silent conformance failure.
+            # L1/L2 do not require zero-BLOCKING, so they keep the empty
+            # return (lower strictness dials).
+            if self.config.conformance_level in (
+                ConformanceLevel.L3_STRICT,
+                ConformanceLevel.L4_FORENSIC,
+            ):
+                raise ConformanceFailure(
+                    f"BROKEN_MARKDOWN: analyze_document failed ({exc.code}) — "
+                    f"output is not L3-conformant",
+                    blocking_count=1,
+                ) from exc
             return ""
         self._transition(KernelState.ANALYZE_DOCUMENT)
         # Runtime invariant: analyze_document must populate the profile and
@@ -227,7 +248,14 @@ class TRAKernel:
             build_glossary(src, profile, self.ctx, self.evidence, self.audit)
         except TRAException as exc:
             self._recover(exc)
-        build_entity_table(src, smap, self.ctx, self.evidence, self.audit)
+        # TRA-039: wrap build_entity_table in the same try/except pattern as
+        # build_glossary. Spec §3 BUILD_ENTITY_TABLE Failure Condition is
+        # ENTITY_AMBIGUITY; without this wrapper, an EntityAmbiguity raise
+        # would crash the kernel with no EXCEPTION_HANDLER audit record.
+        try:
+            build_entity_table(src, smap, self.ctx, self.evidence, self.audit)
+        except TRAException as exc:
+            self._recover(exc)
         self._transition(KernelState.BUILD_ARTIFACTS)
 
         target = self._execute_translation(src)
@@ -238,6 +266,17 @@ class TRAKernel:
 
         target = self._repair_loop(target, src, diagnostics)
         self._transition(KernelState.REPAIR_IF_NEEDED)
+
+        # TRA-037: rewrite internal `[text](#slug)` links BEFORE the L3 gate,
+        # so the gate verifies the post-rewrite target (the one actually
+        # emitted). Previously _rewrite_anchors ran AFTER the gate, so the
+        # audit trail's VERIFY_OUTPUT hash was computed on the pre-rewrite
+        # target while the emitted target was post-rewrite — breaking L4
+        # hash-chain integrity. Moving this BEFORE the gate also surfaces
+        # BROKEN_LINK entries (appended to unresolved_ambiguities by
+        # _rewrite_anchors) to the gate's check below.
+        # (TRA-008: rewrite links to point at translated heading slugs, S-06.)
+        target = self._rewrite_anchors(target)
 
         # L3+ conformance gate (Spec §8 / TRA-CONFORMANCE-GUIDE.md:51):
         # if BLOCKING diagnostics remain after the repair loop, the output
@@ -251,23 +290,30 @@ class TRAKernel:
         ):
             final_diags = verify_output(target, src, self.ctx, self.audit)
             final_blocking = [d for d in final_diags if d.severity == Severity.BLOCKING]
-            if final_blocking:
+            # TRA-037: also reject if _rewrite_anchors appended BROKEN_LINK
+            # entries to unresolved_ambiguities — a broken internal link is
+            # a structural conformance failure at L3+.
+            broken_links = [
+                a for a in self.ctx.unresolved_ambiguities if "BROKEN_LINK" in a
+            ]
+            if final_blocking or broken_links:
                 self.audit.flush()
+                if final_blocking:
+                    raise ConformanceFailure(
+                        f"CONFORMANCE_FAILURE: {len(final_blocking)} BLOCKING "
+                        f"diagnostic(s) remain after repair loop — output is not "
+                        f"L3-conformant",
+                        blocking_count=len(final_blocking),
+                    )
                 raise ConformanceFailure(
-                    f"CONFORMANCE_FAILURE: {len(final_blocking)} BLOCKING "
-                    f"diagnostic(s) remain after repair loop — output is not "
-                    f"L3-conformant",
-                    blocking_count=len(final_blocking),
+                    f"CONFORMANCE_FAILURE: {len(broken_links)} BROKEN_LINK "
+                    f"entry/entries in unresolved_ambiguities — output is not "
+                    f"L3-conformant (internal link target missing)",
+                    blocking_count=len(broken_links),
                 )
 
         self._transition(KernelState.AUDIT_DIAGNOSTICS)
         self.audit.flush()
-
-        # TRA-008: rewrite internal `[text](#slug)` links to point at the
-        # translated heading slugs (S-06). Done after AUDIT_DIAGNOSTICS so
-        # the verify gate sees the pre-rewrite target (link integrity is a
-        # post-translation structural concern, not a terminology concern).
-        target = self._rewrite_anchors(target)
 
         self._transition(KernelState.EMIT_PAYLOAD)
         self._export_artifacts()
