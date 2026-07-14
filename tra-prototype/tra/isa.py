@@ -49,10 +49,18 @@ from .memory import (
 )
 from .modules import zh_en
 from .modules.zh_en import ZHENModule
+from .policy import PolicyResolver
 from .utils import extract_entities
 
 # Module providing terminology + style for the active language pair.
 _MODULE = ZHENModule()
+
+# Policy resolver for severity arbitration (TRA-006). The 6-priority stack
+# is non-negotiable; the resolver arbitrates which priority wins when two
+# conflict. Used by verify_output to determine terminology diagnostic
+# severity: if Terminological Consistency (P4) wins over Target Fluency
+# (P6), canonical term leakage is BLOCKING; otherwise WARNING.
+_POLICY_RESOLVER = PolicyResolver(list(PolicyPriority))
 
 # Heading-level detection for structural verification.
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$", re.MULTILINE)
@@ -96,6 +104,13 @@ def analyze_document(
             f"MALFORMED_MARKDOWN: unable to parse structure ({exc})"
         ) from exc
 
+    # TRA-071: structural validation pass. markdown-it-py is too lenient to
+    # raise on malformed input (unclosed fences, etc.), so the BrokenMarkdown
+    # recovery procedure was effectively dead. This pass detects spec-defined
+    # malformed cases and raises BrokenMarkdown so the kernel's EXCEPTION_HANDLER
+    # path (TRA-004) routes it through _recover.
+    _validate_markdown_structure(source)
+
     # TRA-008: preserve the AnchorRegistry on ctx so the kernel can call
     # rewrite_links after translation to repoint internal links (S-06).
     ctx.anchor_registry = registry
@@ -123,6 +138,33 @@ def analyze_document(
         artifact_snapshot={"node_count": structural_map.node_count, "type": doc_type},
     )
     return profile, structural_map
+
+
+# Fenced code block detection (TRA-071): ``` or ~~~ followed by optional
+# language tag. Matches both backtick and tilde fences per CommonMark spec.
+_FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*$", re.MULTILINE)
+
+
+def _validate_markdown_structure(source: str) -> None:
+    """TRA-071: detect spec-defined malformed markdown that markdown-it-py
+    parses leniently. Currently checks for unclosed fenced code blocks.
+
+    Raises BrokenMarkdown if any fence is unclosed. This makes the
+    BrokenMarkdown recovery procedure reachable in production (previously
+    it was dead code because markdown-it-py never raises).
+    """
+    fences = list(_FENCE_RE.finditer(source))
+    # Fences must come in pairs (open + close). An odd count means at least
+    # one fence is unclosed.
+    if len(fences) % 2 != 0:
+        # Find the unclosed fence (the last one with no matching close).
+        unclosed = fences[-1]
+        line_num = source.count("\n", 0, unclosed.start()) + 1
+        raise BrokenMarkdown(
+            f"MALFORMED_MARKDOWN: unclosed fenced code block at line {line_num} "
+            f"(fence: {unclosed.group(0).strip()!r}). markdown-it-py parses this "
+            f"leniently, but the TRA spec requires a closed fence."
+        )
 
 
 def _detect_document_type(source: str) -> str:
@@ -500,16 +542,31 @@ def verify_output(
             )
 
     # Terminology: glossary terms must appear as canonical targets.
-    # TRA-009 + TRA-006: severity is policy-driven. CANONICAL term leakage
-    # is BLOCKING (Terminological Consistency P4 > Target Fluency P6);
-    # CONTEXT_SENSITIVE term leakage stays WARNING (fluency may legitimately
+    # TRA-009 + TRA-006: severity is policy-driven via the PolicyResolver.
+    # CANONICAL term leakage: Terminological Consistency (P4) vs Target
+    # Fluency (P6) — if P4 wins, severity is BLOCKING; if P6 wins, WARNING.
+    # CONTEXT_SENSITIVE term leakage: always WARNING (fluency may legitimately
     # override context-dependent mappings).
     from .memory import GlossaryStatus
+
+    # TRA-006: consult the PolicyResolver to determine whether Terminological
+    # Consistency wins over Target Fluency. This makes the severity arbitration
+    # explicit and testable (monkeypatching the resolver changes the severity).
+    term_wins_over_fluency = _POLICY_RESOLVER.wins(
+        PolicyPriority.TERMINOLOGICAL_CONSISTENCY,
+        PolicyPriority.TARGET_FLUENCY,
+    )
 
     for entry in ctx.glossary_cache:
         if entry.source in target:  # untranslated source term leaked
             if entry.status == GlossaryStatus.CANONICAL:
-                severity = Severity.BLOCKING
+                # TRA-006: severity is arbitrated by the PolicyResolver.
+                # Default: TERMINOLOGICAL_CONSISTENCY (P4) wins over
+                # TARGET_FLUENCY (P6) → BLOCKING. If the resolver is
+                # monkeypatched to return False, severity drops to WARNING.
+                severity = (
+                    Severity.BLOCKING if term_wins_over_fluency else Severity.WARNING
+                )
             else:
                 severity = Severity.WARNING
             diagnostics.append(

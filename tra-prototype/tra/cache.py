@@ -30,7 +30,14 @@ def _canonical_json(payload: Any) -> str:
     return json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
 
 
-def _hash_sorted(obj: Any) -> str:
+def _hash_canonical_json(obj: Any) -> str:
+    """SHA-256 of the canonical JSON serialization of `obj`.
+
+    The name reflects what the function actually does: it hashes the
+    canonical JSON (sorted keys, UTF-8) of the input. It does NOT sort
+    lists — only dict keys are sorted by ``json.dumps(sort_keys=True)``.
+    For order-independent hashing of collections, use ``_hash_set``.
+    """
     return hashlib.sha256(_canonical_json(obj).encode("utf-8")).hexdigest()
 
 
@@ -40,8 +47,8 @@ def _hash_set(items: list[Any]) -> str:
     Each item is hashed canonically, then the sorted set of hashes is hashed
     again. This makes the cache key independent of list ordering (CACHE_STRATEGY.md).
     """
-    per_item = sorted(_hash_sorted(item) for item in items)
-    return _hash_sorted(per_item)
+    per_item = sorted(_hash_canonical_json(item) for item in items)
+    return _hash_canonical_json(per_item)
 
 
 class CacheKeyContext(BaseModel):
@@ -62,7 +69,9 @@ class CacheKeyContext(BaseModel):
             "entity_hash": _hash_set([e.model_dump() for e in self.entities]),
             "model_endpoint": self.model_endpoint,
             "model_version": self.model_version,
-            "policy_stack_hash": _hash_sorted([p.value for p in self.policy_stack]),
+            "policy_stack_hash": _hash_canonical_json(
+                [p.value for p in self.policy_stack]
+            ),
         }
         return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 

@@ -15,6 +15,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# TRA-043: import the Protocol at runtime (not under TYPE_CHECKING) so
+# Pydantic can resolve the forward reference. modules/base.py only imports
+# from typing (no circular dependency on memory.py).
+from .modules.base import LanguageModuleProtocol
+
 
 class PolicyPriority(int, Enum):
     """Immutable arbitration stack (Spec §5.1). Lower number = higher priority.
@@ -188,6 +193,10 @@ class StyleProfile(BaseModel):
 class RuntimeContext(BaseModel):
     """The mutable 'memory' of the VM (Spec §4)."""
 
+    # TRA-043: arbitrary_types_allowed so Pydantic accepts the
+    # LanguageModuleProtocol field (Protocols are not Pydantic-native types).
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     configuration: dict[str, Any] = Field(default_factory=dict)
     document_profile: DocumentProfile | None = None
     glossary_cache: list[GlossaryEntry] = Field(default_factory=list)
@@ -201,10 +210,10 @@ class RuntimeContext(BaseModel):
     # The active language module (TRA-002). ISA functions read ctx.module
     # instead of the module-level _MODULE singleton. None falls back to the
     # default ZHENModule (backward compat for direct ISA calls in tests).
-    # Typed as Any because the module contract is structural (duck-typed):
-    # get_glossary_mappings, get_style_profile, is_forbidden,
-    # get_forbidden_targets, entity_type_hint, apply_zh_rules, apply_rules.
-    module: Any = Field(default=None, exclude=True)
+    # TRA-043: typed as the LanguageModuleProtocol (not Any) so mypy --strict
+    # can catch typos in method names. The Protocol is structural
+    # (runtime_checkable), so ZHENModule satisfies it without subclassing.
+    module: LanguageModuleProtocol | None = Field(default=None, exclude=True)
     # The AnchorRegistry from ANALYZE_DOCUMENT (TRA-008). Preserved so the
     # kernel can call rewrite_links after translation to repoint internal
     # `[text](#slug)` links at the translated heading slugs (S-06).

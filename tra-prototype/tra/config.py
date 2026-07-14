@@ -36,7 +36,10 @@ class BootstrapConfig(BaseModel):
     arbitrary filesystem locations.
     """
 
-    model_config = ConfigDict(frozen=True)
+    # TRA-047: extra='forbid' rejects unknown keys (catches YAML typos like
+    # conformance_lelevel instead of conformance_level). frozen=True is the
+    # TRA-018 immutability enforcement.
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     language_pair: str
     domain: str
@@ -81,6 +84,8 @@ class BootstrapConfig(BaseModel):
     @classmethod
     def from_yaml(cls, path: str | Path) -> BootstrapConfig:
         raw: dict[str, Any] = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        # TRA-047: read base_dir from YAML so the path-traversal validator
+        # (TRA-014) uses the YAML's base_dir, not the default '.'.
         return cls(
             language_pair=raw["language_pair"],
             domain=raw["domain"],
@@ -96,6 +101,7 @@ class BootstrapConfig(BaseModel):
             audit_trace=raw.get("artifacts", {}).get(
                 "audit_trace", "./audit_trace.jsonl"
             ),
+            base_dir=raw.get("base_dir", "."),
         )
 
     @property

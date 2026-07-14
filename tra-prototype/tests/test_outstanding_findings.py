@@ -1275,3 +1275,87 @@ class TestTRA054L3ConformanceFailureRaiseBranch:
             pytest.raises(ConformanceFailure, match=r"BLOCKING"),
         ):
             kernel.run("# test\n")
+
+
+# =========================================================================
+# TRA-006 (round 2) — Wire PolicyResolver into verify_output production path
+# =========================================================================
+
+
+class TestTRA006PolicyResolverInvokedInProduction:
+    """TRA-006 (round 2): the PolicyResolver must be consulted in the
+    production verify_output code path, not just tested in isolation.
+
+    Previously verify_output hard-coded `if CANONICAL: BLOCKING else WARNING`
+    — the severity was policy-aware in spirit but not arbitrated through the
+    resolver. This test monkeypatches PolicyResolver.resolve to return
+    TARGET_FLUENCY (P6) instead of TERMINOLOGICAL_CONSISTENCY (P4), and
+    asserts the terminology diagnostic drops to WARNING — proving the
+    resolver is actually consulted.
+    """
+
+    def test_monkeypatching_resolver_changes_terminology_severity(self) -> None:
+        """If PolicyResolver.resolve returns TARGET_FLUENCY, canonical term
+        leakage must be WARNING (not BLOCKING) — proving the resolver is
+        consulted in the production verify_output path."""
+        from unittest.mock import patch
+
+        from tra.diagnostics import AuditTrail
+        from tra.isa import verify_output
+        from tra.memory import (
+            DocumentProfile,
+            GlossaryEntry,
+            GlossaryStatus,
+            RuntimeContext,
+            Severity,
+            StructuralMap,
+        )
+
+        ctx = RuntimeContext(
+            configuration={},
+            document_profile=DocumentProfile(
+                type="Advisory",
+                register_="Authoritative",
+                intent="Disclose Vulnerability",
+                audience="Technical readers",
+            ),
+            glossary_cache=[
+                GlossaryEntry(
+                    source="成立",
+                    target="Confirmed",
+                    status=GlossaryStatus.CANONICAL,
+                    rule_id="ZH-EN-RULE#CANON",
+                )
+            ],
+            structural_map=StructuralMap(nodes=[]),
+        )
+        # Target contains the untranslated canonical source term.
+        target = "成立 here"
+        source = "成立 here"
+
+        # First, baseline: without monkeypatch, canonical leakage is BLOCKING.
+        baseline_diags = verify_output(
+            target, source, ctx, AuditTrail("/tmp/test_tra006_baseline.jsonl")
+        )
+        baseline_term = [d for d in baseline_diags if d.subsystem == "terminology"]
+        assert baseline_term, "expected at least one terminology diagnostic"
+        assert all(d.severity == Severity.BLOCKING for d in baseline_term), (
+            "baseline: canonical term leakage must be BLOCKING (P4 > P6)"
+        )
+
+        # Now monkeypatch the _POLICY_RESOLVER instance's wins() method to
+        # return False (TERMINOLOGICAL does NOT win over FLUENCY).
+        # If the resolver is consulted, the severity should drop to WARNING.
+        with patch("tra.isa._POLICY_RESOLVER") as mock_resolver:
+            mock_resolver.wins.return_value = False
+            diags = verify_output(
+                target, source, ctx, AuditTrail("/tmp/test_tra006_mocked.jsonl")
+            )
+        term_diags = [d for d in diags if d.subsystem == "terminology"]
+        assert term_diags, "expected at least one terminology diagnostic"
+        assert all(d.severity == Severity.WARNING for d in term_diags), (
+            f"with PolicyResolver mocked to return TARGET_FLUENCY, canonical "
+            f"term leakage must be WARNING (not BLOCKING) — got "
+            f"{[d.severity for d in term_diags]}. The resolver is NOT being "
+            f"consulted in the production verify_output path (TRA-006)."
+        )

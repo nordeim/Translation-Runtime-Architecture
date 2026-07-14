@@ -69,11 +69,6 @@ NOMINALIZATION: dict[str, str] = {
     "执行迁移": "migrate",
 }
 
-# Information-order: conclusion-leading markers (ZH). When a clause opens with
-# evidence and closes on one of these, the conclusion is surfaced first so the
-# target reads evidence -> conclusion (verification-report readability).
-CONCLUSION_LEADING: tuple[str, ...] = ("因此", "所以", "故", "由此可见", "综上")
-
 # EN -> ZH four-character expressions (四字格) for translationese handling.
 FOUR_CHAR_MAP: dict[str, str] = {
     "seamless migration": "无缝迁移",

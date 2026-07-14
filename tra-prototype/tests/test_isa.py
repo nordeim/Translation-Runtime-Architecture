@@ -55,10 +55,14 @@ def test_analyze_empty_source_raises():
 
 def test_analyze_malformed_raises():
     ctx = _ctx()
-    # markdown-it-py is lenient, so we assert it at least returns a map
-    # for valid markdown; an unclosed fence is still valid CommonMark.
-    profile, smap = analyze_document("```\ncode\n", ctx, _audit())
-    assert smap is not None
+    # TRA-071: an unclosed fenced code block now raises BrokenMarkdown
+    # (previously markdown-it-py parsed it leniently and the BrokenMarkdown
+    # recovery procedure was dead code). The structural validation pass in
+    # analyze_document detects the unclosed fence and raises.
+    from tra.exceptions import BrokenMarkdown
+
+    with pytest.raises(BrokenMarkdown, match=r"unclosed|fence|malformed"):
+        analyze_document("```\ncode\n", ctx, _audit())
 
 
 # --- BUILD_GLOSSARY ---
