@@ -398,6 +398,12 @@ def translate_segment(
     if llm_translate is not None:
         try:
             target = llm_translate(source_segment, ctx)
+            # TRA-076: sanitize LLM output through the same chokepoint as
+            # source input. A malicious/compromised LLM could inject bidi
+            # overrides, null bytes, or BOM into the translation (OWASP A03).
+            from .utils import sanitize_input
+
+            target = sanitize_input(target)
             basis = "LLM decision"
             # TRA-033: guard against empty/None LLM output. These bypass the
             # except block entirely (no exception is raised) but produce
@@ -416,6 +422,12 @@ def translate_segment(
             # return early. Previously the code fell through to emit a SECOND
             # record without the degraded flag — an auditor inspecting the
             # last record per segment would miss the degradation (TRA-015).
+            # TRA-078: sanitize the exception repr to redact potential
+            # secrets (API keys, Bearer tokens) before storing in the audit
+            # trail (OWASP A09).
+            from .kernel import _sanitize_exc_repr
+
+            safe_exc_repr = _sanitize_exc_repr(exc)
             rec = EvidenceRecord(
                 type=EvidenceType.LLM_DECISION,
                 module="isa.translate_segment",
@@ -423,7 +435,7 @@ def translate_segment(
                 target_span=target,
                 rationale=(
                     f"{basis} (glossary + entity + epistemic substitution; "
-                    f"degraded from llm_unavailable: {exc!r})"
+                    f"degraded from llm_unavailable: {safe_exc_repr})"
                 ),
             )
             ev_id = evidence.add(rec)
@@ -437,7 +449,7 @@ def translate_segment(
                 [ev_id],
                 artifact_snapshot={
                     "degraded": True,
-                    "reason": f"llm_unavailable: {exc!r}",
+                    "reason": f"llm_unavailable: {safe_exc_repr}",
                 },
             )
             return result

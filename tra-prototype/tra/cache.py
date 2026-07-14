@@ -104,14 +104,28 @@ class TranslationCache:
         raw = self._cache.get(key)
         if raw is None:
             return None
-        result = TranslationResult.model_validate(raw)
+        # TRA-077: cache stores JSON strings (not pickle/dict) to prevent
+        # insecure deserialization (OWASP A08). Parse the JSON string back
+        # into a TranslationResult.
+        if isinstance(raw, str):
+            import json
+
+            parsed = json.loads(raw)
+            result = TranslationResult.model_validate(parsed)
+        else:
+            # Backward compat: old pickle entries (dict). Migrate on next set.
+            result = TranslationResult.model_validate(raw)
         result.cache_hit = True
         return result
 
     def set(self, key: str, result: TranslationResult) -> None:
         if not self.enabled or self._cache is None:
             return
-        self._cache.set(key, result.model_dump(mode="json"), expire=None)
+        # TRA-077: store JSON string, NOT model_dump() dict. diskcache uses
+        # pickle by default for non-string values, which allows arbitrary
+        # code execution on cache load (OWASP A08). Storing a JSON string
+        # makes the cache safe: json.loads() cannot execute code.
+        self._cache.set(key, result.model_dump_json(), expire=None)
 
     def invalidate(self, pattern: str | None = None) -> int:
         """Manual invalidation (CLI: tra cache-clear). No TTL otherwise.

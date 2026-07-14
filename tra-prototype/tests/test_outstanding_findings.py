@@ -1560,3 +1560,163 @@ class TestTRA093BrokenLinkFalsePositive:
         rewritten, broken = rewrite_links(md, registry)
         assert not broken, f"false-positive broken: {broken}"
         assert rewritten == md, f"link should be unchanged, got: {rewritten!r}"
+
+
+# =========================================================================
+# TRA-076 (round 3) — LLM seam output must be sanitized (OWASP A03)
+# =========================================================================
+
+
+class TestTRA076LLMOutputSanitized:
+    """TRA-076 (round 3): LLM seam output must pass through sanitize_input.
+
+    A malicious/compromised LLM could inject bidi overrides, null bytes,
+    or BOM into the translation. The LLM response must be sanitized before
+    use, just like source input is sanitized in analyze_document.
+    """
+
+    def test_llm_response_bidi_overrides_stripped(self, tmp_path: Path) -> None:
+        """LLM returning a string with bidi overrides must have them stripped."""
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import translate_segment
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="llm",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        kernel = TRAKernel(cfg)
+
+        # LLM returns a string with bidi overrides + null byte + BOM.
+        malicious = "Confirmed\u202eHello\x00\ufeff"
+        from typing import Any
+
+        def evil_llm(src: str, ctx: Any) -> str:
+            return malicious
+
+        result = translate_segment(
+            "成立",
+            kernel.ctx,
+            kernel.cache,
+            EvidenceRegistry(),
+            AuditTrail(str(tmp_path / "audit.jsonl")),
+            llm_translate=evil_llm,
+        )
+        # Bidi overrides, null bytes, and BOM must be stripped.
+        assert "\u202e" not in result.translation, "bidi override not stripped"
+        assert "\x00" not in result.translation, "null byte not stripped"
+        assert "\ufeff" not in result.translation, "BOM not stripped"
+        assert "Confirmed" in result.translation
+
+
+# =========================================================================
+# TRA-077 (round 3) — diskcache must use JSON, not pickle (OWASP A08)
+# =========================================================================
+
+
+class TestTRA077CacheJsonNotPickle:
+    """TRA-077 (round 3): TranslationCache must store JSON, not pickle.
+
+    diskcache uses pickle by default, which allows arbitrary code
+    execution on cache load. The fix is to store model_dump_json()
+    (string) and json.loads() on get.
+    """
+
+    def test_cache_stores_json_not_pickle(self, tmp_path: Path) -> None:
+        """The raw cache blob must be valid JSON, not a pickle."""
+
+        from tra.cache import TranslationCache, TranslationResult
+
+        cache = TranslationCache(tmp_path / "cache", enabled=True)
+        result = TranslationResult(
+            translation="Confirmed", evidence_ids=["ev1"], cache_hit=False
+        )
+        cache.set("test_key", result)
+
+        # Read the raw value directly from diskcache.
+        raw = cache._cache.get("test_key")
+        assert raw is not None
+        # Pickle protocol-5 starts with \x80\x05; JSON starts with '{'.
+        raw_str = raw if isinstance(raw, str) else str(raw)
+        assert not raw_str.startswith("\x80"), (
+            f"cache value is pickle (starts with \\x80), not JSON: {raw_str[:20]!r}"
+        )
+        # Must be valid JSON.
+        import json
+
+        parsed = json.loads(raw_str)
+        assert parsed["translation"] == "Confirmed"
+
+    def test_cache_get_roundtrip(self, tmp_path: Path) -> None:
+        """set + get must return the same TranslationResult."""
+        from tra.cache import TranslationCache, TranslationResult
+
+        cache = TranslationCache(tmp_path / "cache", enabled=True)
+        result = TranslationResult(
+            translation="Hello", evidence_ids=["ev1", "ev2"], cache_hit=False
+        )
+        cache.set("key1", result)
+        retrieved = cache.get("key1")
+        assert retrieved is not None
+        assert retrieved.translation == "Hello"
+        assert retrieved.evidence_ids == ["ev1", "ev2"]
+        assert retrieved.cache_hit is True
+
+
+# =========================================================================
+# TRA-078 (round 3) — exc!r in audit trail must not leak secrets (OWASP A09)
+# =========================================================================
+
+
+class TestTRA078SecretRedaction:
+    """TRA-078 (round 3): exception repr in audit trail must redact secrets.
+
+    LLM client exceptions often include API key fragments (sk-...),
+    Authorization headers, etc. These must be redacted before storing
+    in the audit trail.
+    """
+
+    def test_api_key_redacted_in_audit(self, tmp_path: Path) -> None:
+        """An exception with 'sk-abc123' must NOT appear verbatim in audit."""
+
+        from tra.config import BootstrapConfig
+        from tra.exceptions import TRAException
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        kernel = TRAKernel(cfg)
+        # Simulate an exception with a secret in the message.
+        exc = TRAException("OpenAI auth failed: sk-abc123secret456 Bearer xyz789")
+        kernel._recover(exc)
+        kernel.audit.flush()
+
+        # Read the audit trail and check for secrets.
+        with open(str(tmp_path / "audit.jsonl")) as f:
+            lines = f.readlines()
+        audit_text = "".join(lines)
+        assert "sk-abc123secret456" not in audit_text, "API key leaked into audit trail"
+        assert "Bearer xyz789" not in audit_text, "Bearer token leaked into audit trail"
+        # The redaction marker should be present.
+        assert "[REDACTED" in audit_text or "REDACTED" in audit_text, (
+            "expected redaction marker in audit trail"
+        )

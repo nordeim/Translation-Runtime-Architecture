@@ -79,6 +79,26 @@ _KERNEL_ORDER: list[KernelState] = [
 # The kernel no longer needs its own copy.
 
 
+# TRA-078: redact potential secrets from exception repr before storing in
+# the audit trail. Matches common LLM-client secret patterns: API keys
+# (sk-...), Bearer tokens, Authorization headers, api_key parameters.
+_SECRET_RE = re.compile(
+    r"(sk-[A-Za-z0-9]{8,}|Bearer\s+[A-Za-z0-9._-]+|"
+    r"Authorization:\s*[^\s,;]+|api[_-]?key['\"]?\s*[:=]\s*['\"]?[^\s'\"]+)",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_exc_repr(exc: BaseException) -> str:
+    """Return a sanitized repr of `exc` with secrets redacted (TRA-078).
+
+    Replaces API keys, Bearer tokens, and Authorization headers with
+    '[REDACTED]' so the audit trail never persists LLM client secrets.
+    """
+    raw = repr(exc)
+    return _SECRET_RE.sub("[REDACTED]", raw)
+
+
 class TRAKernel:
     """Runs the full TRA pipeline on a source document."""
 
@@ -381,12 +401,20 @@ class TRAKernel:
     def _recover(self, exc: TRAException) -> None:
         """EXCEPTION_HANDLER path: apply the spec-mandated recovery procedure
         and record it on the audit trail + L4 ambiguity register.
+
+        TRA-078: the exception repr is sanitized to redact potential
+        secrets (API keys, Bearer tokens) before storing in the audit
+        trail (OWASP A09).
         """
         report = route_exception(
             exc,
             self.ctx.unresolved_ambiguities,
             canonical_target=getattr(exc, "canonical_target", ""),
         )
+        # TRA-078: sanitize both the exception repr and the report detail
+        # (which may contain str(exc)) to redact potential secrets.
+        safe_reason = _sanitize_exc_repr(exc)
+        safe_detail = _SECRET_RE.sub("[REDACTED]", report.detail)
         self.audit.append(
             "EXCEPTION_HANDLER",
             report.code,
@@ -394,8 +422,9 @@ class TRAKernel:
             artifact_snapshot={
                 "severity": report.severity.value,
                 "action": report.action.value,
-                "detail": report.detail,
+                "detail": safe_detail,
                 "source_term": report.source_term,
+                "reason": safe_reason,
             },
             flags_raised=[report.severity.value],
         )
