@@ -1,0 +1,491 @@
+"""Synthesis — consolidate findings from Tracks R3, A3, B3, C3, D3, E3, F3 into a master register.
+
+Deduplication rules:
+- Same root cause across tracks → one consolidated finding, cite all track IDs.
+- Carry-over from Round 2 → keep original TRA-0XX ID, update round2_status.
+- New findings → assign TRA-072+ IDs in track order (A3 first, then B3, C3, D3, E3, F3).
+
+Output: /home/z/my-project/download/TRA_Round3/master_findings_register_r3.json
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+# Master findings register — synthesized from 7 tracks (R3 + A3 + B3 + C3 + D3 + E3 + F3).
+# Each finding has: id, severity, category, track, title, evidence, detail, suggested_fix,
+#                   round2_status (fixed | persistent | partial | new | n/a), source_findings
+FINDINGS: list[dict] = [
+    # =========================================================================
+    # Round-2 carry-overs — persistent or partial (kept at original IDs)
+    # =========================================================================
+    {
+        "id": "TRA-001",
+        "severity": "WARNING",
+        "category": "Spec Conformance / ISA Contract",
+        "track": "A3,E3",
+        "title": "TRANSLATE_SEGMENT operates on whole document, not per-leaf segment (partial fix, persistent)",
+        "evidence": "kernel.py:405-449 (_execute_translation calls translate_segment on whole protected src); isa.py:315 (translate_segment signature accepts str); reporting.py:73-95 (line_by_line_trace uses substring heuristic); repair_history.jsonl segment_index always 0",
+        "detail": "Round 1 found TRANSLATE_SEGMENT receives the whole document. Round 3 confirms the partial fix persists: code-block (fenced + inline) no-translate zone protection IS implemented (kernel.py:416-437), so S-03 passes. However, full per-leaf segment translation remains deferred. Consequences confirmed end-to-end by Track E3: (1) cache keys are per-document, not per-segment; (2) RepairAttempt.segment_index is always 0; (3) evidence_trace.jsonl uses substring containment rather than structural line→segment→evidence mapping, producing orphan lines.",
+        "suggested_fix": "Refactor _execute_translation to walk ctx.structural_map.nodes, identify leaf segments (paragraph, list_item, table_cell, heading), and call translate_segment per leaf. Re-assemble the target via the structural map. This unblocks per-segment cache keys, per-segment repair, and structural evidence tracing.",
+        "round2_status": "partial",
+        "source_findings": ["TRA-A3-005", "TRA-E3-001", "TRA-E3-005"]
+    },
+    {
+        "id": "TRA-016",
+        "severity": "INFO",
+        "category": "Code Quality / Dead Code",
+        "track": "B3",
+        "title": "AuditTrail.count_blocking stub — REMEDIATED since Round 2 (Track R3 baseline false positive)",
+        "evidence": "tra/diagnostics.py — count_blocking method no longer present at HEAD b783745",
+        "detail": "Round 1 and Round 2 flagged count_blocking as a persistent stub returning 0. Track B3 confirms the stub has been silently removed (no longer in diagnostics.py). Track R3's static check was a false positive (it grepped for 'count_blocking' and 'return 0' separately, matching unrelated code). The dead code is gone.",
+        "suggested_fix": "No action needed — stub removed. Update Track R3 baseline static check to reflect removal.",
+        "round2_status": "fixed",
+        "source_findings": ["TRA-B3 (verified removed)"]
+    },
+    {
+        "id": "TRA-017",
+        "severity": "WARNING",
+        "category": "Code Quality / Dependency Hygiene",
+        "track": "B3",
+        "title": "6 unused dependencies still listed in pyproject.toml (persistent)",
+        "evidence": "tra-prototype/pyproject.toml (litellm, structlog, pydantic-settings, mdit-py-plugins, black, pytest-asyncio all listed); grep across tra/ confirms 0 production imports for any of them",
+        "detail": "Round 1 and Round 2 flagged these 6 deps as unused. Round 3 confirms all 6 are STILL listed and STILL unused. litellm pulls ~50 transitive packages (openai, tiktoken, tokenizers, huggingface-hub) — heavy install footprint for a rule-based prototype. The LLM seam is caller-supplied (never imports litellm) and tests are synchronous (pytest-asyncio unused). structlog listed but engine uses plain AuditTrail. pydantic-settings listed but config uses plain pydantic. mdit-py-plugins listed but markdown-it-py used directly. black listed but ruff is the formatter.",
+        "suggested_fix": "Remove all 6 from pyproject.toml dependencies. If any are needed for future Phase 7 work (structlog for structured logging per implementation_plan.md 6.3.1), add them back when actually imported. Run 'pip install -e .' to verify the install footprint drops.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-B3-005"]
+    },
+    {
+        "id": "TRA-026",
+        "severity": "INFO",
+        "category": "Code Quality / Dead Config",
+        "track": "B3",
+        "title": "cache.expire field — REMEDIATED since Round 2 (Track R3 baseline false positive)",
+        "evidence": "tra-prototype/config.yaml — cache.expire field no longer present at HEAD b783745; tra/config.py does not read 'expire'",
+        "detail": "Round 1 and Round 2 flagged cache.expire as a dead config field. Track B3 confirms the field has been silently removed from config.yaml and is not read by from_yaml. Track R3's static check was a false positive (it grepped case-insensitively for 'expire' and matched unrelated words like 'expires' in comments). The dead config is gone.",
+        "suggested_fix": "No action needed — field removed. Update Track R3 baseline static check.",
+        "round2_status": "fixed",
+        "source_findings": ["TRA-B3 (verified removed)"]
+    },
+    {
+        "id": "TRA-038",
+        "severity": "WARNING",
+        "category": "Spec Conformance / Exception Recovery (§6)",
+        "track": "A3,E3",
+        "title": "3 of 5 TRA-EXCEPTION types never raised in production (persistent)",
+        "evidence": "rg 'raise (UnknownTerm|CertaintyConflict|EntityAmbiguity)' tra/ returns 0 hits across kernel.py, isa.py, anchor.py, utils.py",
+        "detail": "Round 2 flagged that UnknownTerm, CertaintyConflict, and EntityAmbiguity are defined in exceptions.py and have recovery procedures in recovery.py, but are never raised in production code paths. Round 3 confirms this persists. Track E3 Probe 4 confirms: an unknown CJK term passes through untranslated with no exception, exit 0. This means the spec's exception model is only 40% operational (2 of 5 types: BrokenMarkdown and GlossaryConflict are raised).",
+        "suggested_fix": "Wire UnknownTerm in _rule_translate (isa.py) when a CJK token has no glossary match and is not an entity. Wire CertaintyConflict in verify_output when an epistemic marker is strengthened/weakened. Wire EntityAmbiguity in build_entity_table (anchor.py) when a token matches multiple entity patterns. Add regression tests for each.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-A3-002", "TRA-E3-002"]
+    },
+    {
+        "id": "TRA-040",
+        "severity": "INFO",
+        "category": "Spec Conformance / State Machine (§2.1)",
+        "track": "A3",
+        "title": "EXCEPTION_HANDLER/HALT_ERROR are recovery actions, not KernelStates (intentional, persistent)",
+        "evidence": "tra/kernel.py KernelState enum (lines 49-60) has 9 states; neither EXCEPTION_HANDLER nor HALT_ERROR appear",
+        "detail": "Round 2 flagged this as a spec ambiguity. Round 3 confirms: EXCEPTION_HANDLER and HALT_ERROR are correctly modeled as recovery actions (in recovery.py route_exception), NOT as KernelStates. This is the correct design — the kernel transitions to AUDIT_DIAGNOSTICS after recovery, not to a pseudo-state. The spec text is ambiguous but the implementation is correct.",
+        "suggested_fix": "Clarify in TRA-SPECIFICATION.md §2.1 that EXCEPTION_HANDLER and HALT_ERROR are recovery actions, not kernel states. No code change needed.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-A3-003"]
+    },
+    {
+        "id": "TRA-042",
+        "severity": "WARNING",
+        "category": "Spec Conformance / VERIFY_OUTPUT (§3)",
+        "track": "A3",
+        "title": "Structural verification is heading-count-only (persistent)",
+        "evidence": "tra/isa.py verify_output — structural check compares heading count only; no table row/col, list nesting, or code-block shape verification",
+        "detail": "Round 2 flagged that verify_output's structural check only compares the number of headings in source vs target. Round 3 confirms this persists. Table row/column counts, list nesting depth, and code-block fence counts are NOT verified. This means a translation that drops a table row or merges two list items would pass VERIFY_OUTPUT at L3.",
+        "suggested_fix": "Extend verify_output to check: (1) table row count per table, (2) table column count per row, (3) list item count per list, (4) fenced code block count, (5) heading level preservation. Emit BLOCKING diagnostic on mismatch.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-A3-004"]
+    },
+    # =========================================================================
+    # Round 3 NEW findings — TRA-072+ (ordered by track: A3, B3, C3, D3, E3, F3)
+    # =========================================================================
+    # --- Track A3 new findings ---
+    {
+        "id": "TRA-072",
+        "severity": "WARNING",
+        "category": "Spec Conformance / Policy Engine (§5.2)",
+        "track": "A3",
+        "title": "PolicyResolver consulted for only ONE conflict pair (TERMINOLOGICAL vs FLUENCY)",
+        "evidence": "tra/isa.py:555-558 — _POLICY_RESOLVER.wins(TERMINOLOGICAL_CONSISTENCY, TARGET_FLUENCY) is the only invocation; spec §5.2 mandates universal arbitration",
+        "detail": "TRA-006 was fixed in commit a4d0b3a by routing the terminology severity decision through _POLICY_RESOLVER.wins(). However, this is the ONLY conflict pair the resolver arbitrates. The spec's Policy Engine is supposed to be the universal arbiter for all 6 priority conflicts (e.g., Factual vs Structural when a heading contains a version number, Entity vs Terminological when an entity matches a glossary term). The current implementation uses hard-coded conditionals for all other severity decisions.",
+        "suggested_fix": "Identify all severity-decision points in verify_output and route each through PolicyResolver.wins() with the appropriate priority pair. Add tests that monkeypatch the resolver to verify each decision is policy-driven, not hard-coded.",
+        "round2_status": "new",
+        "source_findings": ["TRA-A3-001"]
+    },
+    {
+        "id": "TRA-073",
+        "severity": "INFO",
+        "category": "Code Quality / Dead Code",
+        "track": "A3",
+        "title": "Dead 'out = out' no-op loop in isa.py _rule_translate",
+        "evidence": "tra/isa.py:488-492 — for loop that assigns 'out = out' with no effect",
+        "detail": "Track A3 found a dead code loop in _rule_translate that iterates but assigns 'out = out' (no-op). This is likely a leftover from a refactor. It doesn't affect behavior but is misleading.",
+        "suggested_fix": "Remove the dead loop at isa.py:488-492.",
+        "round2_status": "new",
+        "source_findings": ["TRA-A3-006"]
+    },
+    {
+        "id": "TRA-074",
+        "severity": "INFO",
+        "category": "Code Quality / State Management",
+        "track": "A3",
+        "title": "_deterministic_clock seed set in run() not __init__ (latent misuse risk)",
+        "evidence": "tra/kernel.py:199-202 — self._source_hash_seed set in run(); __init__ leaves it None",
+        "detail": "The deterministic clock seed is set from the source hash at the start of run(). If any audit record is appended before run() is called (e.g., in a test that constructs TRAKernel and appends to audit directly), the seed is None and the clock returns a fixed epoch. This is a latent misuse risk.",
+        "suggested_fix": "Either (a) set a default seed in __init__ (e.g., '0'*16 as already fallback-coded), or (b) raise if _deterministic_clock is called before the seed is set. Document that run() must be called before any audit.append().",
+        "round2_status": "new",
+        "source_findings": ["TRA-A3-007"]
+    },
+    {
+        "id": "TRA-075",
+        "severity": "INFO",
+        "category": "Test Suite / Coverage Gap",
+        "track": "A3",
+        "title": "Pairwise kernel transition test coverage thin (1 of 81 pairs tested)",
+        "evidence": "tests/test_outstanding_findings.py TestTRA007TransitionOrdering — tests forward sequence only; no negative tests for illegal transitions (e.g., BOOTSTRAP → EMIT_PAYLOAD)",
+        "detail": "Track A3 found that the kernel state machine has 9 states, meaning 81 possible (state, next_state) pairs, but only the happy-path forward sequence is tested. Illegal transitions (backward, same-state, skip-ahead) are not systematically tested. TRA-049 covers same-state, but backward and skip-ahead are untested.",
+        "suggested_fix": "Add a parametrized test that attempts every illegal (state, next_state) pair and asserts TRAException is raised. This closes the mutation gap found in Round 2 (changing < to <= was caught by TRA-049, but other mutations might not be).",
+        "round2_status": "new",
+        "source_findings": ["TRA-A3-008"]
+    },
+    # --- Track B3 new findings (OWASP-aware security deep-dive) ---
+    {
+        "id": "TRA-076",
+        "severity": "WARNING",
+        "category": "Security / OWASP A03:2021 Injection",
+        "track": "B3",
+        "title": "LLM seam output bypasses sanitize_input chokepoint",
+        "evidence": "tra/isa.py:398-414 — translate_segment accepts llm_translate response and uses it directly without routing through sanitize_input",
+        "detail": "TRA-012 established sanitize_input as the single chokepoint for source sanitization (null bytes, control chars, Unicode bidi overrides). However, when the LLM seam is used, the LLM's response is used directly without sanitization. A malicious or compromised LLM could inject bidi overrides / control chars / BOM into the translation output, re-opening the source-side sanitization gap. This is an OWASP A03:2021 (Injection) finding.",
+        "suggested_fix": "In translate_segment, after receiving the LLM response, route it through sanitize_input before using it. Add a test that supplies an LLM callback returning a string with bidi overrides and asserts they are stripped.",
+        "round2_status": "new",
+        "source_findings": ["TRA-B3-002"]
+    },
+    {
+        "id": "TRA-077",
+        "severity": "WARNING",
+        "category": "Security / OWASP A08:2021 Insecure Deserialization",
+        "track": "B3",
+        "title": "diskcache serializes TranslationResult via pickle (RCE on cache load)",
+        "evidence": "tra/cache.py TranslationCache.set stores model_dump() dict; diskcache uses pickle by default; verified empirically: stored blob starts with \\x80\\x05\\x95 (pickle protocol-5 marker)",
+        "detail": "TranslationCache stores TranslationResult as a dict via diskcache, which serializes values using pickle by default. A malicious cache file with a __reduce__ payload would execute arbitrary code on cache.get(). While the cache is local, an attacker with write access to cache.db (e.g., via a CI shared filesystem) could substitute a malicious translation that executes code on the next run. This is an OWASP A08:2021 (Insecure Deserialization) finding.",
+        "suggested_fix": "Store model_dump_json() (string) instead of model_dump() (dict) in TranslationCache.set. In TranslationCache.get, json.loads() the string and reconstruct TranslationResult. This eliminates pickle deserialization entirely.",
+        "round2_status": "new",
+        "source_findings": ["TRA-B3-003"]
+    },
+    {
+        "id": "TRA-078",
+        "severity": "INFO",
+        "category": "Security / OWASP A09:2021 Logging & Monitoring",
+        "track": "B3",
+        "title": "exc!r in audit trail could leak LLM client secrets",
+        "evidence": "tra/kernel.py _recover — artifact_snapshot.reason contains exc!r which may include LLM client error messages with Authorization headers or API key fragments",
+        "detail": "When an LLM exception is caught and routed through _recover, the exception's repr (exc!r) is stored in the audit trail's artifact_snapshot.reason. LLM client exceptions (e.g., openai.AuthenticationError) often include the API key fragment or Authorization header in the error message. This could leak secrets into the audit trail, which is persisted to disk and may be shared.",
+        "suggested_fix": "Sanitize exc!r before storing in artifact_snapshot. Strip any string matching /(sk-|Bearer |Authorization:|api[_-]?key)/i. Add a test that supplies an exception with a fake API key and asserts it is redacted in the audit trail.",
+        "round2_status": "new",
+        "source_findings": ["TRA-B3-004"]
+    },
+    {
+        "id": "TRA-079",
+        "severity": "INFO",
+        "category": "Security / Cache Integrity",
+        "track": "B3",
+        "title": "TranslationResult cache values have no integrity protection (no MAC/signature)",
+        "evidence": "tra/cache.py — cache.get returns stored value without verifying integrity; no HMAC or signature on cached translations",
+        "detail": "An attacker with write access to cache.db could substitute a cached translation with a malicious one (e.g., translating 'Confirmed' back to a weakened term). The cache has no integrity check to detect substitution. Combined with TRA-077 (pickle deserialization), this is a local privilege escalation vector.",
+        "suggested_fix": "After fixing TRA-077 (switch to JSON), add an HMAC-SHA256 over the JSON string using a key derived from the source hash. Verify the HMAC on cache.get and raise if mismatch.",
+        "round2_status": "new",
+        "source_findings": ["TRA-B3-012"]
+    },
+    # --- Track C3 new findings (doc staleness) ---
+    {
+        "id": "TRA-080",
+        "severity": "WARNING",
+        "category": "Doc Consistency / CLAUDE.md",
+        "track": "C3",
+        "title": "CLAUDE.md TRA-006 'half-fix' entry is now stale (a4d0b3a fully fixed it)",
+        "evidence": "CLAUDE.md:50 — 'PolicyResolver is defined and tested but never invoked in production verify_output'; actual: isa.py:555 invokes _POLICY_RESOLVER.wins()",
+        "detail": "Commit a4d0b3a fully fixed TRA-006 by routing the terminology severity decision through _POLICY_RESOLVER.wins() at isa.py:555. The regression test TestTRA006PolicyResolverInvokedInProduction confirms this. However, CLAUDE.md's 'Known gaps' section still describes TRA-006 as a half-fix ('PolicyResolver is defined and tested but never invoked in production verify_output'). This is materially misleading about the prototype's Policy Engine status.",
+        "suggested_fix": "Update CLAUDE.md 'Known gaps' to remove or update the TRA-006 entry. Either delete it (fully fixed) or update to note the TRA-072 partial coverage (only one conflict pair). Also update tra-prototype/README.md:100-102 which mirrors the same stale claim.",
+        "round2_status": "new",
+        "source_findings": ["TRA-C3-007", "TRA-C3-008"]
+    },
+    {
+        "id": "TRA-081",
+        "severity": "WARNING",
+        "category": "Doc Consistency / tra-prototype/README.md",
+        "track": "C3",
+        "title": "tra-prototype/README.md Architecture table misattributes Policy module to tra/config.py",
+        "evidence": "tra-prototype/README.md:49 — Architecture table lists 'tra/config.py' for Policy; actual: tra/policy.py",
+        "detail": "The Architecture table in tra-prototype/README.md misattributes the Policy Engine to tra/config.py. The PolicyResolver actually lives in tra/policy.py (25 LOC). This is a simple documentation error but could mislead a new contributor.",
+        "suggested_fix": "Update tra-prototype/README.md:49 to reference tra/policy.py instead of tra/config.py.",
+        "round2_status": "new",
+        "source_findings": ["TRA-C3-009"]
+    },
+    {
+        "id": "TRA-082",
+        "severity": "WARNING",
+        "category": "Doc Consistency / tra-prototype/README.md",
+        "track": "C3",
+        "title": "tra-prototype/README.md TRA-004 entry misleadingly says EntityAmbiguity routes through _recover",
+        "evidence": "tra-prototype/README.md:96-99 — 'EntityAmbiguity now routes through _recover'; actual: EntityAmbiguity is never raised (TRA-038 persistent)",
+        "detail": "tra-prototype/README.md claims 'EntityAmbiguity now routes through _recover (EXCEPTION_HANDLER)'. While the recovery procedure exists in recovery.py, EntityAmbiguity is never raised in production code (TRA-038 persistent). The doc claim is misleading — it implies the exception is operational when it is not.",
+        "suggested_fix": "Update tra-prototype/README.md:96-99 to clarify that EntityAmbiguity's recovery procedure is defined but the exception itself is not yet raised in production (cross-reference TRA-038).",
+        "round2_status": "new",
+        "source_findings": ["TRA-C3-010"]
+    },
+    {
+        "id": "TRA-083",
+        "severity": "INFO",
+        "category": "Doc Consistency / README.md",
+        "track": "C3",
+        "title": "README.md path error: 'tra-prototype/implementation_plan.md' (actual: repo root)",
+        "evidence": "README.md:114 — references 'tra-prototype/implementation_plan.md'; actual path: implementation_plan.md (repo root)",
+        "detail": "README.md:114 says 'See tra-prototype/implementation_plan.md for the item-by-item state'. The file actually lives at the repo root (implementation_plan.md), not inside tra-prototype/.",
+        "suggested_fix": "Update README.md:114 to reference 'implementation_plan.md' (repo root).",
+        "round2_status": "new",
+        "source_findings": ["TRA-C3-011"]
+    },
+    {
+        "id": "TRA-084",
+        "severity": "INFO",
+        "category": "Doc Consistency / AGENTS.md",
+        "track": "C3",
+        "title": "AGENTS.md internal contradiction — 'separate repo' vs 'overridden to subdirectory'",
+        "evidence": "AGENTS.md:25 — 'Any concrete engine claiming TRA compliance lives in a different repo'; AGENTS.md:5 — 'A Phase 0 prototype engine lives in tra-prototype/ (a subdirectory, overriding the original separate repository boundary rule)'",
+        "detail": "AGENTS.md contains an internal contradiction: line 5 says the boundary rule was overridden (tra-prototype/ is a subdirectory), but line 25 still says 'Any concrete engine lives in a different repo'. The line 25 text is stale.",
+        "suggested_fix": "Update AGENTS.md:25 to reflect the override: 'Any concrete engine OTHER THAN the bundled tra-prototype/ lives in a different repo.'",
+        "round2_status": "new",
+        "source_findings": ["TRA-C3-012"]
+    },
+    {
+        "id": "TRA-085",
+        "severity": "WARNING",
+        "category": "Doc Consistency / status.md",
+        "track": "C3",
+        "title": "status.md frozen session log says '103 tests' (actual: 174)",
+        "evidence": "status.md — frozen at commit 4d97aa1, says '103 pytest passing'; actual at HEAD b783745: 174 tests",
+        "detail": "status.md is a verbatim session log frozen at commit 4d97aa1. It claims '103 pytest passing' but the actual count at HEAD b783745 is 174. The file is stale and misleading.",
+        "suggested_fix": "Either (a) delete status.md (it's a frozen session log, not a living doc), or (b) update it to reference the current test count and add a note that it's a historical session log. Option (a) is cleaner.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-C3-013"]
+    },
+    {
+        "id": "TRA-086",
+        "severity": "INFO",
+        "category": "Doc Consistency / implementation_plan.md",
+        "track": "C3",
+        "title": "implementation_plan.md still calls tra-prototype/ 'external codebase' (persistent)",
+        "evidence": "implementation_plan.md:3 — 'This file is an implementation plan for tra-prototype/ — an external codebase — not part of the normative spec'",
+        "detail": "implementation_plan.md:3 still calls tra-prototype/ 'an external codebase'. This is stale — tra-prototype/ has been a subdirectory of this repo since the boundary override (AGENTS.md:5, CLAUDE.md:9, README.md:11). The same stale phrasing appears in prototype.md:1.",
+        "suggested_fix": "Update implementation_plan.md:3 and prototype.md:1 to remove 'external codebase' phrasing. Replace with 'the prototype engine subdirectory'.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-C3-009 (R2 carry-over)", "TRA-C3-010 (R2 carry-over)"]
+    },
+    {
+        "id": "TRA-087",
+        "severity": "INFO",
+        "category": "Doc Consistency / implementation_plan.md",
+        "track": "C3",
+        "title": "implementation_plan.md File Structure Summary missing 6 modules + 4 test files",
+        "evidence": "implementation_plan.md File Structure Summary — lists test_isa.py, test_kernel.py, test_anchor.py, test_benchmark.py, test_modules.py, test_phase0.py, test_phase6_hardening.py, test_recovery.py, test_reporting.py, test_utils.py, test_validate.py; actual: 17 test files including test_outstanding_findings.py, test_tra043_protocol.py, test_tra047_config_robustness.py, test_tra071_broken_markdown.py, test_e2e_to_translate.py, conftest.py",
+        "detail": "The File Structure Summary in implementation_plan.md is missing 6 test files that were added during Round 1/2 remediation. This makes the plan document inaccurate as a reference for the test surface.",
+        "suggested_fix": "Update the File Structure Summary to list all 17 test files, or replace with a reference to 'ls tests/test_*.py'.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-C3-011 (R2 carry-over)"]
+    },
+    # --- Track D3 new findings (test suite) ---
+    {
+        "id": "TRA-088",
+        "severity": "WARNING",
+        "category": "Test Suite / LLM Seam Coverage",
+        "track": "D3",
+        "title": "TRA-048 single-audit-record invariant only tested for RuntimeError path",
+        "evidence": "tests/test_outstanding_findings.py TestTRA033LLMSeamRobustness — 7 LLM-seam tests, but only the RuntimeError test asserts exactly one TRANSLATE_SEGMENT audit record; the other 6 only assert 'Confirmed' in res.translation",
+        "detail": "Track D3 found that the TRA-048 invariant (exactly one TRANSLATE_SEGMENT audit record on LLM degradation) is only tested for the RuntimeError exception path. The other 6 LLM-seam tests (empty response, None response, 4 other exception types) only assert the translation contains 'Confirmed'. A future mutation that makes the early 'return result' conditional on isinstance(exc, RuntimeError) would slip through.",
+        "suggested_fix": "Extend all 7 LLM-seam tests to assert exactly one TRANSLATE_SEGMENT audit record. Add a parametrized test that runs all exception types through the assertion.",
+        "round2_status": "new",
+        "source_findings": ["TRA-D3-004"]
+    },
+    {
+        "id": "TRA-089",
+        "severity": "WARNING",
+        "category": "Test Suite / E2E Coverage",
+        "track": "D3",
+        "title": "No e2e test exercises the ConformanceFailure path",
+        "evidence": "tests/test_e2e_to_translate.py — all 12 tests use the passing manual translation (to_translate.en.md); no test triggers ConformanceFailure",
+        "detail": "Track D3 found that the 12 new e2e tests (commit 354fa94) all use the passing manual translation. None of them exercise the ConformanceFailure path (e.g., a broken input that should fail at L3). This means the e2e test surface doesn't cover the failure mode where the kernel correctly rejects a non-conformant output.",
+        "suggested_fix": "Add 2-3 e2e tests that trigger ConformanceFailure: (1) unclosed fence at L3, (2) broken internal link at L3, (3) forbidden epistemic drift at L3. Assert exit code 1 and ConformanceFailure raised.",
+        "round2_status": "new",
+        "source_findings": ["TRA-D3-003"]
+    },
+    {
+        "id": "TRA-090",
+        "severity": "WARNING",
+        "category": "Test Suite / LLM Hijack Fragility",
+        "track": "D3",
+        "title": "LLM hijack in e2e tests uses fragile module-level patching",
+        "evidence": "tests/test_e2e_to_translate.py — patches kernel_mod.translate_segment at module level; fragile if import structure changes",
+        "detail": "Track D3 found that the e2e tests patch kernel_mod.translate_segment at the module level to hijack the LLM seam. This is fragile — if the import structure changes (e.g., isa.py is renamed or translate_segment is moved), the patch target breaks silently. The cleaner approach is to add an llm_translate parameter to TRAKernel.run() and pass it through.",
+        "suggested_fix": "Add an optional llm_translate parameter to TRAKernel.run() that overrides the config-supplied callback. Update e2e tests to pass it directly instead of patching at module level.",
+        "round2_status": "new",
+        "source_findings": ["TRA-D3-002"]
+    },
+    {
+        "id": "TRA-091",
+        "severity": "WARNING",
+        "category": "Test Suite / HITL Coverage",
+        "track": "D3",
+        "title": "interactive=True kernel path still untested end-to-end (TRA-052 persistent)",
+        "evidence": "tests/ — TestTRA032HITLResolutions tests HITL in isolation but no test runs TRAKernel(interactive=True).run() end-to-end",
+        "detail": "Track D3 confirms TRA-052 persists: the interactive=True kernel path is tested in isolation (TestTRA032HITLResolutions) but no test runs the full kernel pipeline with interactive=True. This means a regression in the interactive path (e.g., the break statement in _repair_loop that hands off to HITL) would not be caught by the test suite. Coverage at kernel.py:478-490 is 0%.",
+        "suggested_fix": "Add a test that constructs TRAKernel(interactive=True), supplies an input that triggers UNRECOVERABLE, and mocks review_decision to return accept/override/skip. Assert the kernel handles each resolution correctly.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-D3-005"]
+    },
+    {
+        "id": "TRA-092",
+        "severity": "INFO",
+        "category": "Test Suite / Benchmark Coverage",
+        "track": "D3",
+        "title": "Benchmark coverage at 22/100+ spec target (S-03 and E-03 still missing)",
+        "evidence": "tests/benchmark/cases/*.jsonl — 22 cases implemented; TRA-BENCHMARK-SUITE.md spec target is 100+",
+        "detail": "Track D3 confirms benchmark coverage is 22 of the 24 spec-documented cases (S-03 and E-03 missing), which is 22% of the 100+ spec target. The spec target is aspirational ('intended to grow toward 100+'), so this is not a BLOCKING, but it limits the L3/L4 certification surface.",
+        "suggested_fix": "Add S-03 (code-block no-translate zone — should pass given TRA-001 partial fix) and E-03 (entity ambiguity). Then continue adding cases toward the 100+ target.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-D3-006"]
+    },
+    # --- Track E3 new findings (forensic L4) ---
+    {
+        "id": "TRA-093",
+        "severity": "BLOCKING",
+        "category": "Spec Conformance / L3 Gate (§8)",
+        "track": "E3",
+        "title": "False-positive BROKEN_LINK blocks valid CJK heading + CJK link translations at L3/L4",
+        "evidence": "kernel.py:323-379 _rewrite_anchors Pass 2 — binds translated heading slugs but rewrite_links checks original slugs only; any doc with # <CJK glossary term> + [link](#<same CJK term>) is rejected",
+        "detail": "Track E3 found a NEW REGRESSION introduced by the TRA-037 fix. The L3 gate now checks unresolved_ambiguities for BROKEN_LINK entries (correct per TRA-037). However, _rewrite_anchors Pass 2 has a false positive: when a CJK heading is translated and the link target is the same CJK term, the rewrite_links pass fails to find the translated slug and appends a BROKEN_LINK entry. This blocks publication of valid CJK-heading + CJK-link translations at L3/L4. The TRA-037 fix is correct in principle but interacts with the pre-existing _rewrite_anchors false positive to break valid inputs.",
+        "suggested_fix": "In _rewrite_anchors Pass 2, after binding translated heading slugs, check if the link's target slug matches a TRANSLATED slug value in the registry (not just original slugs). If the link already points at a valid translated slug, do not mark it broken. Add a regression test with a CJK heading + CJK link that should pass.",
+        "round2_status": "new",
+        "source_findings": ["TRA-E3-003"]
+    },
+    {
+        "id": "TRA-094",
+        "severity": "INFO",
+        "category": "Forensic L4 / Evidence Trace",
+        "track": "E3",
+        "title": "evidence_trace.jsonl still produces orphan lines (TRA-001 consequence)",
+        "evidence": "compilation_artifacts/evidence_trace.jsonl — line 7 has evidence_ids: [] (orphan)",
+        "detail": "Track E3 confirms the persistent TRA-001 consequence: evidence_trace.jsonl uses substring containment (target_span in line) rather than structural line→segment→evidence mapping, producing orphan lines (lines with no evidence). This is a forensic completeness gap at L4.",
+        "suggested_fix": "Fixed by TRA-001 full remediation (per-leaf segment translation). Until then, document the limitation in the L4 artifact.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-E3-001"]
+    },
+    {
+        "id": "TRA-095",
+        "severity": "INFO",
+        "category": "Forensic L4 / HITL",
+        "track": "E3",
+        "title": "HITL path unreachable through CLI (TRA-E-009 persistent)",
+        "evidence": "tra_cli.py — no flag to force UNRECOVERABLE for testing; interactive=True only fires when repair_segment raises Unrecoverable, which cannot be triggered through normal CLI input",
+        "detail": "Track E3 confirms the persistent TRA-E-009: the HITL path (interactive=True) is unreachable through the CLI because no normal input triggers UNRECOVERABLE. The path works when monkey-patched (Probe 7 PASS) but cannot be exercised by a user.",
+        "suggested_fix": "Add a --force-unrecoverable debug flag to the CLI that injects a synthetic UNRECOVERABLE after the first repair attempt, for testing the HITL path. Document it as debug-only.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-E3-006"]
+    },
+    # --- Track F3 new findings (module extension safety) ---
+    {
+        "id": "TRA-096",
+        "severity": "BLOCKING",
+        "category": "Module Extension / Registry",
+        "track": "F3",
+        "title": "as_interface() crashes with Pydantic ValidationError (spec's sanctioned extension path is broken)",
+        "evidence": "tra/modules/zh_en.py as_interface() returns ModuleInterface dataclass; tra/memory.py RuntimeContext.module field typed as LanguageModuleProtocol; Pydantic rejects ModuleInterface as not an instance of LanguageModuleProtocol",
+        "detail": "Track F3 found that the spec's documented sanctioned extension path (SKILL.md §6) is BROKEN. The exact example code SKILL.md shows: registry.register(my_module.as_interface()); kernel = TRAKernel(cfg, registry=registry) crashes with pydantic.ValidationError: Input should be an instance of LanguageModuleProtocol. This affects the DEFAULT registry too (ZHENModule via as_interface() is equally broken). The bypass path (registering the full module object directly, NOT via as_interface()) works, but the documented path is broken.",
+        "suggested_fix": "Option A: add the 4 missing Callable fields to ModuleInterface (is_forbidden, get_forbidden_targets, entity_type_hint, apply_zh_rules) and wire them in as_interface(). Option B: deprecate as_interface() and have register() accept the full module object directly. Either way, add an isinstance(mod, LanguageModuleProtocol) check in register() so the error surfaces at registration time.",
+        "round2_status": "new",
+        "source_findings": ["TRA-F3-BLOCKING-1", "TRA-F3-BLOCKING-2"]
+    },
+    {
+        "id": "TRA-097",
+        "severity": "WARNING",
+        "category": "Module Extension / Protocol Enforcement",
+        "track": "F3",
+        "title": "ModuleRegistry.register() does NOT call isinstance(mod, LanguageModuleProtocol)",
+        "evidence": "tra/modules/registry.py register() — stores module without Protocol check; LanguageModuleProtocol is @runtime_checkable but never used",
+        "detail": "Track F3 found that ModuleRegistry.register() does NOT call isinstance(mod, LanguageModuleProtocol) despite the Protocol being @runtime_checkable. A completely broken module (missing methods) is silently stored; the error surfaces later as an opaque AttributeError or ValidationError that never mentions the Protocol.",
+        "suggested_fix": "Add isinstance(mod, LanguageModuleProtocol) check in register(). Raise TypeError with an actionable message if the check fails.",
+        "round2_status": "new",
+        "source_findings": ["TRA-F3-WARNING-1"]
+    },
+    {
+        "id": "TRA-098",
+        "severity": "WARNING",
+        "category": "Module Extension / Registry Edge Cases",
+        "track": "F3",
+        "title": "Duplicate module.name silently overwrites; conflicting directions not detected",
+        "evidence": "tra/modules/registry.py register() — uses dict assignment by name; no duplicate detection; no direction conflict detection",
+        "detail": "Track F3 found that registering two modules with the same name silently overwrites the first. Registering two modules with conflicting metadata.direction (e.g., two 'FR -> EN' modules) is not detected — first-registered wins. There is no unregister() API.",
+        "suggested_fix": "Add duplicate-name detection (raise on conflict, or warn and overwrite with a log). Add direction-conflict detection. Add unregister(name) method.",
+        "round2_status": "new",
+        "source_findings": ["TRA-F3-WARNING-2", "TRA-F3-WARNING-3", "TRA-F3-WARNING-4"]
+    },
+    {
+        "id": "TRA-099",
+        "severity": "WARNING",
+        "category": "Module Extension / CLI Gap",
+        "track": "F3",
+        "title": "tra_cli.py translate does NOT pass registry= to TRAKernel (TRA-002 follow-up)",
+        "evidence": "tra_cli.py translate — constructs TRAKernel(cfg) without registry; falls back to ZHENModule",
+        "detail": "Track F3 confirms TRA-002 CLI gap persists: the kernel API supports registry=, but tra_cli.py translate does not pass a registry. Combined with TRA-096 (as_interface() broken), the CLI is the only working entry point at HEAD, and it's hard-coded to ZHENModule. A user who registers a custom module via the API can't use it via the CLI.",
+        "suggested_fix": "Add a --registry flag (or --module flag) to tra_cli.py translate that loads a module from a specified Python path and passes it to TRAKernel. This closes the TRA-002 loop.",
+        "round2_status": "persistent",
+        "source_findings": ["TRA-F3-WARNING-5"]
+    },
+    {
+        "id": "TRA-100",
+        "severity": "INFO",
+        "category": "Doc Consistency / TRA-MODULE-ZH-EN.md",
+        "track": "F3",
+        "title": "TRA-MODULE-ZH-EN.md is a linguistic spec, not a module-authoring template",
+        "evidence": "TRA-MODULE-ZH-EN.md — documents ZH↔EN linguistic rules but does not document LanguageModuleProtocol, as_interface(), kind, or metadata.direction",
+        "detail": "Track F3 found that TRA-MODULE-ZH-EN.md is a linguistic specification (glossary mappings, epistemic lexicon, syntactic rules), not a module-authoring template. It does not document the LanguageModuleProtocol interface, the as_interface() method, the kind field, or the metadata.direction field. A new module author would not be able to author fr-en.md from this doc alone.",
+        "suggested_fix": "Either (a) add a 'Module Authoring Guide' section to TRA-MODULE-ZH-EN.md, or (b) create a separate TRA-MODULE-AUTHORING.md that documents the Protocol, as_interface(), kind, metadata.direction, and the registry API. Reference it from SKILL.md §6.",
+        "round2_status": "new",
+        "source_findings": ["TRA-F3-INFO-2"]
+    },
+]
+
+
+def main() -> None:
+    out = Path("/home/z/my-project/download/TRA_Round3/master_findings_register_r3.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(FINDINGS, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"Wrote {out}")
+    print(f"Total findings: {len(FINDINGS)}")
+    # Severity breakdown
+    sev = {}
+    for f in FINDINGS:
+        sev[f["severity"]] = sev.get(f["severity"], 0) + 1
+    print(f"Severity: {sev}")
+    # Track breakdown
+    track = {}
+    for f in FINDINGS:
+        t = f["track"].split(",")[0]
+        track[t] = track.get(t, 0) + 1
+    print(f"By track: {track}")
+    # Round 2 status
+    r2 = {}
+    for f in FINDINGS:
+        r2[f["round2_status"]] = r2.get(f["round2_status"], 0) + 1
+    print(f"Round 2 status: {r2}")
+
+
+if __name__ == "__main__":
+    main()

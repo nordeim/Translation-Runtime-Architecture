@@ -21,3 +21,5 @@ Thumbs.db
 e2e_cache/
 e2e_artifacts/
 e2e_audit_trace.jsonl
+tra-prototype/.coverage
+tra-prototype/htmlcov/
