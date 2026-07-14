@@ -219,13 +219,22 @@ class ZHENModule:
         return source
 
     def as_interface(self) -> ModuleInterface:
-        """Adapt this module to the registry contract (Phase 4.1.2)."""
+        """Adapt this module to the registry contract (Phase 4.1.2).
+
+        TRA-096 (round 3): wires ALL 7 LanguageModuleProtocol methods so
+        the returned ModuleInterface passes Pydantic's
+        RuntimeContext.module: LanguageModuleProtocol validation.
+        """
         return ModuleInterface(
             name=self.name,
             kind=self.kind,
             get_glossary_mappings=self.get_glossary_mappings,
             get_style_profile=self.get_style_profile,
             apply_rules=self.apply_rules,
+            is_forbidden=self.is_forbidden,
+            get_forbidden_targets=self.get_forbidden_targets,
+            entity_type_hint=self.entity_type_hint,
+            apply_zh_rules=self.apply_zh_rules,
             metadata={"direction": self.direction},
         )
 

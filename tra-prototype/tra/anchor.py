@@ -97,6 +97,16 @@ class AnchorRegistry:
             return None
         return self.map_placeholder_to_translated_slug.get(placeholder)
 
+    def is_translated_slug(self, slug: str) -> bool:
+        """Check if `slug` is already a translated slug value (TRA-093).
+
+        After whole-doc translation, a link target may already be the
+        translated slug (e.g. '#the-system-is-confirmed') rather than the
+        original CJK slug. rewrite_links must recognize such slugs as
+        valid (not broken) to avoid false-positive BROKEN_LINK diagnostics.
+        """
+        return slug in self.map_placeholder_to_translated_slug.values()
+
 
 def rewrite_links(
     markdown: str,
@@ -140,6 +150,11 @@ def rewrite_links(
             text, slug = m.group(1), m.group(2)
             new_slug = registry.translated_slug_for(slug)
             if new_slug is None:
+                # TRA-093: if the slug is already a translated slug value
+                # (e.g. after whole-doc translation the link target was
+                # translated in-place), it is NOT broken — leave it as-is.
+                if registry.is_translated_slug(slug):
+                    return m.group(0)
                 if flag_broken and slug not in broken:
                     broken.append(slug)
                 return m.group(0)

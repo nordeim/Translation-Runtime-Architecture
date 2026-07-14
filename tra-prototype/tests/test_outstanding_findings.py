@@ -1359,3 +1359,204 @@ class TestTRA006PolicyResolverInvokedInProduction:
             f"{[d.severity for d in term_diags]}. The resolver is NOT being "
             f"consulted in the production verify_output path (TRA-006)."
         )
+
+
+# =========================================================================
+# TRA-096 (round 3) — as_interface() must satisfy LanguageModuleProtocol
+# =========================================================================
+
+
+class TestTRA096AsInterfaceProtocol:
+    """TRA-096 (round 3): the spec's sanctioned module extension path
+    (as_interface() → register() → TRAKernel(registry=)) must not crash.
+
+    Root cause: ModuleInterface only had 3 Callable fields but
+    LanguageModuleProtocol requires 7 methods. Pydantic's
+    RuntimeContext.module: LanguageModuleProtocol validation rejected
+    the ModuleInterface as "not an instance of LanguageModuleProtocol".
+    """
+
+    def test_as_interface_satisfies_protocol(self) -> None:
+        """ZHENModule().as_interface() must be an instance of
+        LanguageModuleProtocol so Pydantic accepts it."""
+        from tra.modules.base import LanguageModuleProtocol
+        from tra.modules.zh_en import ZHENModule
+
+        iface = ZHENModule().as_interface()
+        assert isinstance(iface, LanguageModuleProtocol), (
+            "as_interface() must return an object satisfying "
+            "LanguageModuleProtocol (TRA-096). ModuleInterface is missing "
+            "is_forbidden, get_forbidden_targets, entity_type_hint, "
+            "apply_zh_rules."
+        )
+
+    def test_default_registry_kernel_does_not_crash(self, tmp_path: Path) -> None:
+        """build_default_registry() + TRAKernel(cfg, registry=) must not
+        raise ValidationError. This is the exact code path documented in
+        SKILL.md §6."""
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+        from tra.modules.registry import build_default_registry
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        registry = build_default_registry()
+        kernel = TRAKernel(cfg, registry=registry)
+        # The module should be set on the context (not None).
+        assert kernel.ctx.module is not None
+        # The module's glossary should be accessible.
+        mappings = kernel.ctx.module.get_glossary_mappings()
+        assert "成立" in mappings, "ZHENModule glossary must be wired"
+
+    def test_stub_fren_module_via_registry(self, tmp_path: Path) -> None:
+        """A stub FR→EN module registered via as_interface() must work
+        end-to-end through the kernel."""
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+        from tra.modules.base import LanguageModuleProtocol
+        from tra.modules.registry import ModuleInterface, build_default_registry
+
+        # Minimal stub module satisfying the protocol.
+        class FrENModule:
+            name = "fr_en"
+            kind = "language"
+            direction = "FR -> EN"
+
+            def get_glossary_mappings(self) -> dict[str, str]:
+                return {
+                    "Bonjour": "Hello",
+                    "système": "system",
+                    "établi": "established",
+                }
+
+            def get_forbidden_targets(self) -> dict[str, str]:
+                return {}
+
+            def get_style_profile(self) -> object:
+                from tra.memory import StyleProfile
+
+                return StyleProfile(
+                    voice="Active",
+                    sentence_complexity="Medium",
+                    epistemic_mapping={},
+                    punctuation_rules={},
+                )
+
+            def is_forbidden(self, source: str, target: str) -> bool:
+                return False
+
+            def entity_type_hint(self, token: str) -> object | None:
+                return None
+
+            def apply_zh_rules(self, text: str) -> str:
+                return text
+
+            def apply_rules(self, source: str, direction: str) -> str:
+                return source
+
+            def as_interface(self) -> ModuleInterface:
+                return ModuleInterface(
+                    name=self.name,
+                    kind=self.kind,
+                    get_glossary_mappings=self.get_glossary_mappings,
+                    get_style_profile=self.get_style_profile,
+                    apply_rules=self.apply_rules,
+                    is_forbidden=self.is_forbidden,
+                    get_forbidden_targets=self.get_forbidden_targets,
+                    entity_type_hint=self.entity_type_hint,
+                    apply_zh_rules=self.apply_zh_rules,
+                    metadata={"direction": self.direction},
+                )
+
+        cfg = BootstrapConfig(
+            language_pair="FR -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        registry = build_default_registry()
+        fren = FrENModule()
+        # Must satisfy the protocol before registration.
+        assert isinstance(fren, LanguageModuleProtocol)
+        registry.register(fren.as_interface())
+        kernel = TRAKernel(cfg, registry=registry)
+        assert kernel.ctx.module is not None
+        # The kernel should have selected the FR module (not ZHENModule fallback).
+        # (The _select_module filters by source language 'fr'.)
+        mappings = kernel.ctx.module.get_glossary_mappings()
+        assert "Bonjour" in mappings, "FrENModule should be selected for FR -> EN"
+
+
+# =========================================================================
+# TRA-093 (round 3) — False-positive BROKEN_LINK on CJK heading + CJK link
+# =========================================================================
+
+
+class TestTRA093BrokenLinkFalsePositive:
+    """TRA-093 (round 3): a valid document with a CJK heading and a CJK
+    link pointing at that heading must NOT be rejected at L3 with a
+    false-positive BROKEN_LINK.
+
+    Root cause: after whole-doc translation, the link target may already
+    be a translated slug. rewrite_links only looked up original slugs
+    in map_original_slug_to_placeholder, so translated slugs were
+    flagged as broken.
+    """
+
+    def test_cjk_heading_with_cjk_link_not_broken(self, tmp_path: Path) -> None:
+        """# 系统成立 + [系统成立](#系统成立) must pass L3."""
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        src = "# 系统成立\n\nSee [系统成立](#系统成立) for details.\n"
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        kernel = TRAKernel(cfg)
+        target = kernel.run(src)
+        # Must not raise ConformanceFailure. If we got here, the gate passed.
+        assert "Confirmed" in target, f"expected 'Confirmed' in target, got: {target!r}"
+        # No BROKEN_LINK in unresolved_ambiguities.
+        broken = [a for a in kernel.ctx.unresolved_ambiguities if "BROKEN_LINK" in a]
+        assert not broken, f"false-positive BROKEN_LINK: {broken}"
+
+    def test_already_translated_slug_not_broken(self) -> None:
+        """If a link's slug already matches a translated slug value in
+        the registry, rewrite_links must not flag it as broken."""
+        from tra.anchor import AnchorRegistry, rewrite_links
+
+        registry = AnchorRegistry()
+        # Simulate: heading "系统成立" was registered, translated to
+        # "The system is Confirmed", slug "the-system-is-confirmed".
+        placeholder = registry.register("系统成立")
+        registry.bind(placeholder, "the-system-is-confirmed")
+        # The link target is already the translated slug.
+        md = "[link](#the-system-is-confirmed)"
+        rewritten, broken = rewrite_links(md, registry)
+        assert not broken, f"false-positive broken: {broken}"
+        assert rewritten == md, f"link should be unchanged, got: {rewritten!r}"

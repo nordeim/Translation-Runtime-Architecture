@@ -12,13 +12,28 @@ from typing import Any
 
 @dataclass
 class ModuleInterface:
-    """Contract a plug-in module must satisfy (implementation_plan.md §4.4)."""
+    """Contract a plug-in module must satisfy (implementation_plan.md §4.4).
+
+    TRA-096 (round 3): this dataclass must carry ALL methods required by
+    LanguageModuleProtocol (base.py). Previously it only had 3 Callable
+    fields (get_glossary_mappings, get_style_profile, apply_rules), which
+    caused Pydantic's RuntimeContext.module: LanguageModuleProtocol
+    validation to reject ModuleInterface instances as "not an instance of
+    LanguageModuleProtocol". The 4 added fields (is_forbidden,
+    get_forbidden_targets, entity_type_hint, apply_zh_rules) close that
+    gap so as_interface() → register() → TRAKernel(registry=) works.
+    """
 
     name: str
     kind: str  # "language" | "domain" | "formatting"
     get_glossary_mappings: Callable[[], dict[str, str]] = lambda: {}
     get_style_profile: Callable[[], object] = lambda: None
     apply_rules: Callable[[str, str], str] = lambda src, _dir: src
+    # TRA-096: the 4 fields below are required by LanguageModuleProtocol.
+    is_forbidden: Callable[[str, str], bool] = lambda _src, _tgt: False
+    get_forbidden_targets: Callable[[], dict[str, str]] = lambda: {}
+    entity_type_hint: Callable[[str], object | None] = lambda _token: None
+    apply_zh_rules: Callable[[str], str] = lambda text: text
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
