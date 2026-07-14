@@ -10,7 +10,7 @@ It defines 6 core instructions including ANALYZE_DOCUMENT, BUILD_GLOSSARY, and T
 
 🧩 Modularity and Policy Engine
 
-It handles Chinese-English structural differences (e.g., parataxis to hypotaxis) and epistemic-modal mappings (e.g., the Chinese term for "established" must be translated as "Confirmed") through language modules (such as TRA-MODULE-ZH-EN.md). Meanwhile, the policy engine arbitrates conflicts through a priority stack — for example, Factual Integrity has higher priority than Target Fluency, ensuring accuracy takes precedence over eloquence.
+It handles Chinese-English structural differences (e.g., parataxis to hypotaxis) and epistemic-modal mappings (e.g., the Chinese term for "Confirmed" must be translated with exact epistemic certainty) through language modules (such as TRA-MODULE-ZH-EN.md). Meanwhile, the policy engine arbitrates conflicts through a priority stack — for example, Factual Integrity has higher priority than Target Fluency, ensuring accuracy takes precedence over eloquence.
 
 ✅ Conformance Levels (L1–L4): A Ladder of Quality
 
