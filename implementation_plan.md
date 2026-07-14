@@ -1,6 +1,6 @@
 TRA Prototype Implementation Plan 
  
-> **Repo scope note:** Per the repo's own boundary rule (see `README.md` / `AGENTS.md` / `CLAUDE.md`), any concrete engine claiming TRA compliance lives in a *separate* repository. This file is an **implementation plan for `tra-prototype/`** — an external codebase — not part of the normative spec. It is kept here as planning context only.
+> **Repo scope note:** Per the repo's boundary rule (see `README.md` / `AGENTS.md` / `CLAUDE.md`), any concrete engine claiming TRA compliance (OTHER THAN the bundled `tra-prototype/` subdirectory) lives in a *separate* repository. This file is an **implementation plan for `tra-prototype/`** — the prototype engine subdirectory — not part of the normative spec. It is kept here as planning context only.
 
 Executive Summary 
  

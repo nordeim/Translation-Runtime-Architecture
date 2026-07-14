@@ -44,6 +44,28 @@ class ModuleRegistry:
         self._modules: dict[str, ModuleInterface] = {}
 
     def register(self, module: ModuleInterface) -> None:
+        """Register a module. TRA-097: validate the module satisfies the
+        LanguageModuleProtocol at registration time so errors surface with
+        an actionable message, not as an opaque AttributeError later.
+        """
+        from .base import LanguageModuleProtocol
+
+        if not isinstance(module, LanguageModuleProtocol):
+            required = (
+                "get_glossary_mappings",
+                "get_style_profile",
+                "is_forbidden",
+                "get_forbidden_targets",
+                "entity_type_hint",
+                "apply_zh_rules",
+                "apply_rules",
+            )
+            missing = [m for m in required if not hasattr(module, m)]
+            mod_name = getattr(module, "name", "?")
+            raise TypeError(
+                f"Module '{mod_name}' does not satisfy "
+                f"LanguageModuleProtocol. Missing methods: {missing}"
+            )
         self._modules[module.name] = module
 
     def get(self, name: str) -> ModuleInterface:

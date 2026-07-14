@@ -9,23 +9,17 @@ description = "TRA (Translation Runtime Architecture) v1.0 conformant translatio
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.8",
-    "pydantic-settings>=2.3",
     "markdown-it-py>=3.0",
-    "mdit-py-plugins>=0.4",
     "diskcache>=5.6",
     "pyyaml>=6.0",
-    "structlog>=24.1",
     "click>=8.1",
     "rich>=13.7",
-    "litellm>=1.49",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2",
-    "pytest-asyncio>=0.23",
     "ruff>=0.5",
-    "black>=24.4",
     "mypy>=1.10",
 ]
 
@@ -40,10 +34,6 @@ src = ["tra", "tra_cli.py"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
 ignore = ["B008"]  # click decorators
-
-[tool.black]
-line-length = 88
-target-version = ["py311"]
 
 [tool.mypy]
 python_version = "3.11"

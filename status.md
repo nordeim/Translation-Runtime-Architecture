@@ -1,3 +1,5 @@
+> **⚠️ STALE — historical session log.** This file is frozen at commit `4d97aa1` and references "103 pytest passing". The actual test count at HEAD is 174+ (see `tra-prototype/SKILL.md` §7 for current count). This file is retained for historical context only; do not rely on it for current state. For current status, see `CLAUDE.md` → "Prototype engine status".
+
 Now let me commit the Phase 6 work. First, git status and diff. 
  
 Bash(git status && echo "---DIFF STAT---" && git diff --stat)  

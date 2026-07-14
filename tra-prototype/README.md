@@ -46,7 +46,7 @@ repair retry budget, and artifact output paths.
 | Kernel | `tra/kernel.py` | Immutable sequential state machine. Runs the six ISA instructions in canonical order. |
 | ISA | `tra/isa.py` | `ANALYZE_DOCUMENT`, `BUILD_GLOSSARY`, `BUILD_ENTITY_TABLE`, `TRANSLATE_SEGMENT`, `VERIFY_OUTPUT`, `REPAIR_SEGMENT`. |
 | Memory | `tra/memory.py` | Runtime Context + immutable segments (config, structural map, glossary, entities, style). |
-| Policy | `tra/config.py` | Immutable priority stack (Factual → Structural → Entity → Terminological → Epistemic → Fluency). |
+| Policy | `tra/policy.py` | Immutable priority stack (Factual → Structural → Entity → Terminological → Epistemic → Fluency). |
 | Module | `tra/modules/zh_en.py` | ZH↔EN canonical lexicon + rule layers (parataxis→hypotaxis, nominalization, punctuation, 四字格). |
 | Registry | `tra/modules/registry.py` | Pluggable extension point — new language pairs register here without touching core. |
 | Audit | `tra/diagnostics.py` | Append-only JSONL evidence trail; VERIFY emits evidence-based diagnostics (never self-scores). |

@@ -262,12 +262,11 @@ files, including:
   fluency path and is caller-supplied. Code blocks (fenced and inline) are
   already protected from glossary substitution (TRA-001 partial); full
   per-leaf-segment translation is still deferred.
-- **6 unused dependencies** (TRA-017): `litellm`, `structlog`,
-  `pydantic-settings`, `mdit-py-plugins`, `black`, `pytest-asyncio` are listed
-  in `pyproject.toml` but never imported. `litellm` pulls ~50 transitive
-  packages (openai, tiktoken, tokenizers, huggingface-hub) — heavy install
-  footprint for a rule-based prototype. The LLM seam is caller-supplied (never
-  imports litellm) and tests are synchronous.
+- **Dependencies trimmed** (TRA-017, fixed in Round 3): removed 6 unused
+  deps (`litellm`, `structlog`, `pydantic-settings`, `mdit-py-plugins`,
+  `black`, `pytest-asyncio`) from `pyproject.toml`. Install footprint
+  dropped from ~70 packages to ~15. The LLM seam is caller-supplied
+  (never imports litellm) and tests are synchronous.
 - **No segment-level parallelism** — translation is sequential.
 - **Glossary/entity tables rebuilt per run** — only the translation output is
   cached across runs (diskcache).

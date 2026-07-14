@@ -22,7 +22,7 @@ Specification-first repo. TRA = Translation Runtime Architecture v1.0 — normat
 
 - "Working" = authoring, refining, cross-checking spec documents.
 - Use standard git: `git add`, `git commit`, `git log`.
-- Any concrete engine/module/tool claiming TRA compliance lives in a different repo.
+- Any concrete engine/module/tool claiming TRA compliance (OTHER THAN the bundled `tra-prototype/` subdirectory) lives in a different repo.
 - See `CLAUDE.md` for the full mental model and architectural context.
 
 ## Critical invariants (easy to break)

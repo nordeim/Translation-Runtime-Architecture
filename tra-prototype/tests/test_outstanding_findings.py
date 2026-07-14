@@ -1720,3 +1720,47 @@ class TestTRA078SecretRedaction:
         assert "[REDACTED" in audit_text or "REDACTED" in audit_text, (
             "expected redaction marker in audit trail"
         )
+
+
+# =========================================================================
+# TRA-097 (round 3) — register() must validate LanguageModuleProtocol
+# =========================================================================
+
+
+class TestTRA097RegisterProtocolCheck:
+    """TRA-097 (round 3): ModuleRegistry.register() must call isinstance
+    against LanguageModuleProtocol so broken modules are rejected at
+    registration time with an actionable error.
+    """
+
+    def test_broken_module_rejected_at_registration(self) -> None:
+        """A module missing required methods must raise TypeError, not
+        silently store and crash later."""
+        from tra.modules.registry import ModuleRegistry
+
+        class BrokenModule:
+            name = "broken"
+            kind = "language"
+            # Missing get_glossary_mappings, get_style_profile, etc.
+
+        registry = ModuleRegistry()
+        try:
+            registry.register(BrokenModule())  # type: ignore[arg-type]
+            raise AssertionError("Expected TypeError for broken module (TRA-097)")
+        except TypeError as e:
+            assert "LanguageModuleProtocol" in str(e), (
+                f"error must mention LanguageModuleProtocol, got: {e}"
+            )
+
+    def test_valid_module_accepted(self) -> None:
+        """A module satisfying the protocol must be accepted."""
+        from tra.modules.registry import ModuleInterface, ModuleRegistry
+
+        iface = ModuleInterface(
+            name="test",
+            kind="language",
+            metadata={"direction": "ZH -> EN"},
+        )
+        registry = ModuleRegistry()
+        registry.register(iface)
+        assert registry.get("test") is iface
