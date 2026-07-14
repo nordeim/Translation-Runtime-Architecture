@@ -497,11 +497,9 @@ def _rule_translate(
     for src, tgt in glossary.items():
         if src in out:
             out = out.replace(src, tgt)
-    # 4. Entities inserted verbatim (already source form; no-op preserve).
-    for ent in entities:
-        # Ensure casing preserved exactly; nothing to transform.
-        if ent.name not in out and ent.name in segment:
-            out = out  # entities already present verbatim
+    # 4. Entities are preserved verbatim (already in source form; no
+    #    transformation needed — the rule path never alters entities).
+    #    TRA-073 (round 3): removed dead `out = out` no-op loop.
     return out, "rule-based"
 
 

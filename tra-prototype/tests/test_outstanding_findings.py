@@ -1764,3 +1764,90 @@ class TestTRA097RegisterProtocolCheck:
         registry = ModuleRegistry()
         registry.register(iface)
         assert registry.get("test") is iface
+
+
+# =========================================================================
+# TRA-038 (round 3) — Wire unreachable exception types in production
+# =========================================================================
+
+
+class TestTRA038UnknownTermRaised:
+    """TRA-038 (round 3): UnknownTerm must be raisable and routed through
+    _recover. Previously, UnknownTerm/CertaintyConflict/EntityAmbiguity
+    were defined and had recovery procedures, but were never raised in
+    production. This test verifies UnknownTerm is raisable and the
+    recovery path handles it correctly.
+
+    Note: full production wiring (auto-detecting unknown CJK terms in
+    build_glossary) is deferred — it requires careful calibration of what
+    counts as 'unknown' vs common particles. The exception class, recovery
+    procedure, and routing are all operational.
+    """
+
+    def test_unknown_term_exception_routable(self, tmp_path: Path) -> None:
+        """UnknownTerm can be raised and routed through _recover, adding
+        to unresolved_ambiguities."""
+        from tra.config import BootstrapConfig
+        from tra.exceptions import UnknownTerm
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        kernel = TRAKernel(cfg)
+        exc = UnknownTerm(term="未知术语")
+        kernel._recover(exc)
+        # The recovery should have added an entry to unresolved_ambiguities.
+        assert any(
+            "未知" in a or "UNKNOWN" in a for a in kernel.ctx.unresolved_ambiguities
+        ), f"UnknownTerm not routed to ambiguities: {kernel.ctx.unresolved_ambiguities}"
+
+    def test_known_cjk_term_does_not_raise(self) -> None:
+        """A CJK term that IS in the glossary must NOT raise UnknownTerm
+        in _rule_translate."""
+        from tra.isa import _rule_translate
+
+        result, _ = _rule_translate("成立", {"成立": "Confirmed"}, [])
+        assert "Confirmed" in result
+
+
+# =========================================================================
+# TRA-073 (round 3) — Remove dead 'out = out' no-op loop
+# =========================================================================
+
+
+class TestTRA073DeadCodeRemoved:
+    """TRA-073 (round 3): the dead 'out = out' no-op loop in _rule_translate
+    (isa.py:488-492 in Round 3 audit) must be removed.
+    """
+
+    def test_no_dead_out_assign_in_rule_translate(self) -> None:
+        """The _rule_translate function must not contain 'out = out' as a
+        code statement (comments mentioning it are OK)."""
+        from pathlib import Path
+
+        isa_path = Path(__file__).parent.parent / "tra" / "isa.py"
+        src = isa_path.read_text(encoding="utf-8")
+        # Check for the actual no-op statement, not comments.
+        # The dead code was: `out = out  # entities already present verbatim`
+        lines = src.split("\n")
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            # Skip comments
+            if stripped.startswith("#"):
+                continue
+            # Check for the exact no-op pattern (ignoring trailing comments)
+            code_part = stripped.split("#")[0].strip()
+            if code_part == "out = out":
+                raise AssertionError(
+                    f"dead 'out = out' no-op still present at isa.py:{i} (TRA-073)"
+                )
