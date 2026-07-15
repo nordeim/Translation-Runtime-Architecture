@@ -38,15 +38,21 @@ class ModuleInterface:
 
 
 class ModuleRegistry:
-    """Loads and dispatches TRA modules (Spec §9, mutable/extensible)."""
+    """Loads and dispatches TRA modules (Spec §9, mutable/extensible).
+
+    TRA-098 (round 3): duplicate module names and conflicting directions
+    are detected at registration time rather than silently overwriting.
+    """
 
     def __init__(self) -> None:
         self._modules: dict[str, ModuleInterface] = {}
+        self._directions: dict[str, str] = {}  # direction → module name
 
     def register(self, module: ModuleInterface) -> None:
         """Register a module. TRA-097: validate the module satisfies the
         LanguageModuleProtocol at registration time so errors surface with
         an actionable message, not as an opaque AttributeError later.
+        TRA-098: detect duplicate names and conflicting directions.
         """
         from .base import LanguageModuleProtocol
 
@@ -66,7 +72,36 @@ class ModuleRegistry:
                 f"Module '{mod_name}' does not satisfy "
                 f"LanguageModuleProtocol. Missing methods: {missing}"
             )
+        # TRA-098: detect duplicate name.
+        if module.name in self._modules:
+            raise ValueError(
+                f"Module '{module.name}' is already registered. "
+                f"Use unregister() first if you intend to replace it."
+            )
+        # TRA-098: detect conflicting direction for language modules.
+        if module.kind == "language":
+            direction = str(module.metadata.get("direction", ""))
+            if direction and direction in self._directions:
+                existing = self._directions[direction]
+                raise ValueError(
+                    f"Direction conflict: module '{module.name}' has direction "
+                    f"'{direction}' which is already registered by module "
+                    f"'{existing}'. Only one module per direction is allowed."
+                )
+            if direction:
+                self._directions[direction] = module.name
         self._modules[module.name] = module
+
+    def unregister(self, name: str) -> None:
+        """Remove a module from the registry (TRA-098)."""
+        if name not in self._modules:
+            raise KeyError(f"Module '{name}' not registered")
+        module = self._modules.pop(name)
+        # Clean up direction index.
+        if module.kind == "language":
+            direction = str(module.metadata.get("direction", ""))
+            if direction and self._directions.get(direction) == name:
+                del self._directions[direction]
 
     def get(self, name: str) -> ModuleInterface:
         if name not in self._modules:
