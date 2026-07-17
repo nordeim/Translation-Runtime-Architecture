@@ -22,17 +22,17 @@ pip install -e ".[dev]"   # [dev] required for ruff/mypy/pytest quality gates
 
 ```bash
 # Run the full TRA pipeline (Kernel state machine) on a document.
-tra_cli.py translate examples/security_advisory_zh.md -o out.md
+python -m tra_cli translate examples/security_advisory_zh.md -o out.md
 
 # Standalone verifier: audit a candidate OUTPUT against SOURCE (no re-translate).
 # Exits 0 if zero BLOCKING diagnostics at the conformance level; else 1.
-tra_cli.py validate examples/security_advisory_zh.md out.md --level L3
+python -m tra_cli validate examples/security_advisory_zh.md out.md --level L3
 
 # Summarize an audit trace (one AuditRecord per ISA instruction).
-tra_cli.py audit ./audit_trace.jsonl --format summary
+python -m tra_cli audit ./audit_trace.jsonl --format summary
 
 # Invalidate the deterministic cache (no TTL by default).
-tra_cli.py cache-clear [--pattern <glob>]
+python -m tra_cli cache-clear [--pattern <glob>]
 ```
 
 `config.yaml` is the `tvm_bootstrap` (Immutable Config segment): language
@@ -91,7 +91,7 @@ mypy --strict tra
   `RepairAttempt.segment_index`, and the L4 line-by-line trace.
 - **Module registry** (TRA-002, fixed in kernel): the kernel now selects the
   language module from the registry when supplied (`TRAKernel(cfg, registry=)`);
-  however, `tra_cli.py translate` does not yet pass a registry, so the CLI
+  however, `python -m tra_cli translate` does not yet pass a registry, so the CLI
   still falls back to `ZHENModule`.
 - **Exception recovery** (TRA-004, partial): `BrokenMarkdown` and
   `EntityAmbiguity` now route through `_recover`; however,
