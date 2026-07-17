@@ -122,5 +122,5 @@ Round 4 audit register (47 issues + 19 positive verifications) and
 `docs/audit/round4/TRA_Prototype_Audit_Report_r4.docx` for the narrative
 report. Round 3 deliverables (36 findings) are in `docs/audit/round3/`.
 Round 2 deliverables (41 findings) are in `docs/audit/round2/`. Round 1
-deliverables are in `docs/audit/` (top level). Current test count: **210
+deliverables are in `docs/audit/` (top level). Current test count: **228
 across 18 test files**.

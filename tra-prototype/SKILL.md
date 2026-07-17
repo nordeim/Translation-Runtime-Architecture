@@ -240,12 +240,13 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **210 tests** across 18 test
+All four gates must be green. The full suite is **228 tests** across 18 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
-  (34 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 032,
-  033, 036, 037, 038, 039, 041, 049, 050, 051, 053, 054, 073, 074, 075, 076,
-  077, 078, 088, 089, 093, 096, 097, 098)
+  (40 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 032,
+  033, 036, 037, 038, 039, 041, 049, 050, 051, 053, 054, 072, 073, 074, 075,
+  076, 077, 078, 088, 089, 093, 096, 097, 098, 099, A4-011, B4-009, F4-006,
+  F4-007)
 - `test_tra043_protocol.py` — LanguageModuleProtocol type-safety tests
 - `test_tra047_config_robustness.py` — BootstrapConfig `from_yaml`/`extra='forbid'` tests
 - `test_tra071_broken_markdown.py` — unclosed-fence structural validation tests
@@ -330,7 +331,7 @@ security fixes (TRA-076/077/078) verified holding. See
 register and `../docs/audit/round4/remediation_plan_r4.md` for the
 5-batch TDD remediation plan.
 
-**Round 4 remediation** (commits `f226582` through `e54b7a7`, HEAD `e54b7a7`):
+**Round 4 remediation — Batch 1** (commits `f226582` through `e54b7a7`):
 7 of 47 issues fixed via TDD. Test count 199 → 210 (+11 new regression tests).
 - TRA-C4-013 (BLOCKING): tra-prototype/README.md CLI examples fixed (`f226582`).
 - TRA-C4-001..017 (13 doc staleness findings): refreshed across CLAUDE.md,
@@ -343,15 +344,28 @@ register and `../docs/audit/round4/remediation_plan_r4.md` for the
 - TRA-F4-007: _select_module now matches by full direction, not just source (`524c598`).
 - TRA-099: CLI translate now passes registry to TRAKernel + normalizes --lang (`e54b7a7`).
 
+**Round 4 remediation — Batch 2** (commits `d95c36d` through `aae0bca`, HEAD `aae0bca`):
+5 more findings fixed via TDD. Test count 210 → 228 (+18 new tests + 2 benchmark cases).
+- TRA-038: wired 3 unreachable exception types in production (`d95c36d`).
+  UnknownTerm logged via recover_unknown_term (non-halting); CertaintyConflict
+  raised in LLM path when forbidden drift target detected; EntityAmbiguity
+  logged when token matches multiple patterns + hint is None. +7 tests.
+- TRA-042: extended verify_output structural checks beyond heading count (`efbc875`).
+  Now checks table row count, list item count, blockquote line count, HR count,
+  code fence count. +6 tests.
+- TRA-072: routed ALL severity decisions through PolicyResolver (`78c9250`).
+  Structural (P2), Entity (P3), Epistemic (P5) vs Fluency (P6) now all
+  arbitrated by _POLICY_RESOLVER.wins(). +3 tests.
+- TRA-092: added S-03 (inline code) + E-03 (broken markdown) benchmark cases (`d3e5f60`).
+  Benchmark suite now at 24/24 spec cases (was 22/24). +2 cases.
+- TRA-100: created TRA-MODULE-AUTHORING.md guide (`aae0bca`). Phase 7 deliverable.
+
 **Remaining persistent findings** (not yet fixed): TRA-001 (partial, full
-per-leaf segment translation), TRA-038 (partial, exception classes routable
-but never raised in production), TRA-040 (EXCEPTION_HANDLER/HALT_ERROR not
-KernelStates — intentional design decision pending spec change), TRA-042
-(structural verification heading-count-only), TRA-072 (PolicyResolver
-universal arbitration), TRA-079 (cache HMAC integrity), TRA-100 (module
-authoring guide). Plus test-coverage
-gaps (TRA-052/055/056/057/058/090/091/092/094/095) and doc staleness
-residuals (TRA-061/064/065/066/067). See
+per-leaf segment translation — Phase 8, ~16h, separate effort), TRA-040
+(EXCEPTION_HANDLER/HALT_ERROR not KernelStates — intentional design decision
+pending spec change), TRA-079 (cache HMAC integrity — INFO, low priority).
+Plus test-coverage gaps (TRA-052/055/056/057/058/090/091/094/095) and doc
+staleness residuals (TRA-061/064/065/066/067). See
 `../docs/audit/round4/master_findings_register_r4.json` for the full
 machine-readable register.
 
