@@ -3402,3 +3402,189 @@ class TestTRA042ExtendedStructuralVerification:
             f"Expected no structural diagnostics for matching structure, got: "
             f"{structural_diags}"
         )
+
+
+# =========================================================================
+# TRA-072 (round 4 remediation) — Route ALL severity decisions through
+# PolicyResolver. Round 3 wired only the TERMINOLOGICAL vs FLUENCY pair;
+# all other severity decisions (structural, entity, epistemic) are still
+# hard-coded BLOCKING. Spec §5.2 mandates universal arbitration.
+# =========================================================================
+
+
+class TestTRA072UniversalPolicyArbitration:
+    """TRA-072 (round 4 remediation): all severity decisions in verify_output
+    must be routed through _POLICY_RESOLVER.wins(), not hard-coded.
+
+    Spec §5.2: "When instructions conflict, the Policy Engine resolves the
+    conflict using weighted priorities." Currently only the TERMINOLOGICAL
+    vs FLUENCY pair is arbitrated; structural, entity, and epistemic
+    violations are all hard-coded BLOCKING.
+
+    Fix: route each severity decision through the resolver:
+    - Structural (P2) vs Target Fluency (P6)
+    - Entity (P3) vs Target Fluency (P6)
+    - Epistemic (P5) vs Target Fluency (P6)
+
+    Monkeypatching _POLICY_RESOLVER.wins to return False should drop ALL
+    of these from BLOCKING to WARNING.
+    """
+
+    def test_structural_severity_is_policy_driven(self, tmp_path: Path) -> None:
+        """When _POLICY_RESOLVER.wins(STRUCTURAL, FLUENCY) returns False,
+        structural diagnostics should be WARNING, not BLOCKING."""
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail
+        from tra.isa import _POLICY_RESOLVER, verify_output
+        from tra.memory import (
+            ConformanceLevel,
+            RuntimeContext,
+            Severity,
+        )
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        # Source has 2 headings, target has 1 — structural mismatch.
+        source = "# Heading 1\n\n# Heading 2\n"
+        target = "# Heading 1\n"
+
+        # Monkeypatch the resolver to always return False (fluency wins).
+        original_wins = _POLICY_RESOLVER.wins
+        _POLICY_RESOLVER.wins = lambda _a, _b: False  # type: ignore[method-assign]
+        try:
+            diags = verify_output(target, source, ctx, audit)
+        finally:
+            _POLICY_RESOLVER.wins = original_wins  # type: ignore[method-assign]
+
+        structural_diags = [d for d in diags if d.subsystem == "structural"]
+        assert structural_diags, "Expected at least one structural diagnostic"
+        # With the resolver returning False, severity should be WARNING.
+        for d in structural_diags:
+            assert d.severity == Severity.WARNING, (
+                f"TRA-072: structural diagnostic should be WARNING when "
+                f"resolver returns False, got {d.severity}. Issue: {d.issue}"
+            )
+
+    def test_entity_severity_is_policy_driven(self, tmp_path: Path) -> None:
+        """When _POLICY_RESOLVER.wins(ENTITY, FLUENCY) returns False,
+        entity diagnostics should be WARNING, not BLOCKING."""
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail
+        from tra.isa import _POLICY_RESOLVER, verify_output
+        from tra.memory import (
+            ConformanceLevel,
+            Entity,
+            EntityType,
+            RuntimeContext,
+            Severity,
+        )
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        # Set up an entity that's missing from the target.
+        ctx.entity_table = [
+            Entity(name="RustVMM", type=EntityType.PRODUCT, mutable=False)
+        ]
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        source = "RustVMM is here"
+        target = "Missing entity"  # RustVMM not in target
+
+        # Monkeypatch the resolver to always return False (fluency wins).
+        original_wins = _POLICY_RESOLVER.wins
+        _POLICY_RESOLVER.wins = lambda _a, _b: False  # type: ignore[method-assign]
+        try:
+            diags = verify_output(target, source, ctx, audit)
+        finally:
+            _POLICY_RESOLVER.wins = original_wins  # type: ignore[method-assign]
+
+        entity_diags = [d for d in diags if d.subsystem == "entity"]
+        assert entity_diags, "Expected at least one entity diagnostic"
+        for d in entity_diags:
+            assert d.severity == Severity.WARNING, (
+                f"TRA-072: entity diagnostic should be WARNING when "
+                f"resolver returns False, got {d.severity}. Issue: {d.issue}"
+            )
+
+    def test_epistemic_severity_is_policy_driven(self, tmp_path: Path) -> None:
+        """When _POLICY_RESOLVER.wins(EPISTEMIC, FLUENCY) returns False,
+        epistemic diagnostics should be WARNING, not BLOCKING."""
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail
+        from tra.isa import _POLICY_RESOLVER, verify_output
+        from tra.memory import ConformanceLevel, RuntimeContext, Severity
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        # Source contains "成立" (canonical: "Confirmed"); target contains
+        # the forbidden drift target "Valid".
+        source = "The hypothesis 成立"
+        target = "The hypothesis Valid"
+
+        # Monkeypatch the resolver to always return False (fluency wins).
+        original_wins = _POLICY_RESOLVER.wins
+        _POLICY_RESOLVER.wins = lambda _a, _b: False  # type: ignore[method-assign]
+        try:
+            diags = verify_output(target, source, ctx, audit)
+        finally:
+            _POLICY_RESOLVER.wins = original_wins  # type: ignore[method-assign]
+
+        epistemic_diags = [d for d in diags if d.subsystem == "epistemic"]
+        assert epistemic_diags, "Expected at least one epistemic diagnostic"
+        for d in epistemic_diags:
+            assert d.severity == Severity.WARNING, (
+                f"TRA-072: epistemic diagnostic should be WARNING when "
+                f"resolver returns False, got {d.severity}. Issue: {d.issue}"
+            )

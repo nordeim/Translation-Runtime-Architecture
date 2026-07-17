@@ -783,15 +783,25 @@ def verify_output(
     # Structural verification (TRA-042 round 4: extended beyond heading count).
     # Check heading count, table row count, list item count, blockquote line
     # count, HR count, and fenced code block count. Each mismatch raises a
-    # BLOCKING structural diagnostic so a non-benchmarked input cannot
-    # silently pass L3 with broken structure. These checks are regex-based
-    # and run on source/target text directly (no structural_map required).
+    # structural diagnostic so a non-benchmarked input cannot silently pass
+    # L3 with broken structure. These checks are regex-based and run on
+    # source/target text directly (no structural_map required).
+    # TRA-072 (round 4): severity is arbitrated by the PolicyResolver.
+    # Structural Integrity (P2) vs Target Fluency (P6) — if P2 wins (default),
+    # severity is BLOCKING; if P6 wins, WARNING.
+    structural_severity = (
+        Severity.BLOCKING
+        if _POLICY_RESOLVER.wins(
+            PolicyPriority.STRUCTURAL_INTEGRITY, PolicyPriority.TARGET_FLUENCY
+        )
+        else Severity.WARNING
+    )
     src_headings = len(_HEADING_RE.findall(source))
     tgt_headings = len(_HEADING_RE.findall(target))
     if src_headings != tgt_headings:
         diagnostics.append(
             Diagnostic(
-                severity=Severity.BLOCKING,
+                severity=structural_severity,
                 subsystem="structural",
                 issue="Heading count mismatch after translation",
                 evidence=f"source={src_headings} target={tgt_headings}",
@@ -806,7 +816,7 @@ def verify_output(
     if src_table_rows != tgt_table_rows:
         diagnostics.append(
             Diagnostic(
-                severity=Severity.BLOCKING,
+                severity=structural_severity,
                 subsystem="structural",
                 issue="Table row count mismatch after translation",
                 evidence=f"source={src_table_rows} target={tgt_table_rows}",
@@ -822,7 +832,7 @@ def verify_output(
     if src_list_items != tgt_list_items:
         diagnostics.append(
             Diagnostic(
-                severity=Severity.BLOCKING,
+                severity=structural_severity,
                 subsystem="structural",
                 issue="List item count mismatch after translation",
                 evidence=f"source={src_list_items} target={tgt_list_items}",
@@ -837,7 +847,7 @@ def verify_output(
     if src_blockquotes != tgt_blockquotes:
         diagnostics.append(
             Diagnostic(
-                severity=Severity.BLOCKING,
+                severity=structural_severity,
                 subsystem="structural",
                 issue="Blockquote line count mismatch after translation",
                 evidence=f"source={src_blockquotes} target={tgt_blockquotes}",
@@ -853,7 +863,7 @@ def verify_output(
     if src_hrs != tgt_hrs:
         diagnostics.append(
             Diagnostic(
-                severity=Severity.BLOCKING,
+                severity=structural_severity,
                 subsystem="structural",
                 issue="Horizontal rule count mismatch after translation",
                 evidence=f"source={src_hrs} target={tgt_hrs}",
@@ -871,7 +881,7 @@ def verify_output(
     if src_fences != tgt_fences:
         diagnostics.append(
             Diagnostic(
-                severity=Severity.BLOCKING,
+                severity=structural_severity,
                 subsystem="structural",
                 issue="Code fence count mismatch after translation",
                 evidence=f"source={src_fences} target={tgt_fences}",
@@ -880,11 +890,21 @@ def verify_output(
         )
 
     # Factual: entities preserved verbatim (numbers/versions/casing).
+    # TRA-072 (round 4): severity is arbitrated by the PolicyResolver.
+    # Entity Preservation (P3) vs Target Fluency (P6) — if P3 wins (default),
+    # severity is BLOCKING; if P6 wins, WARNING.
+    entity_severity = (
+        Severity.BLOCKING
+        if _POLICY_RESOLVER.wins(
+            PolicyPriority.ENTITY_PRESERVATION, PolicyPriority.TARGET_FLUENCY
+        )
+        else Severity.WARNING
+    )
     for ent in entities:
         if ent.name not in target:
             diagnostics.append(
                 Diagnostic(
-                    severity=Severity.BLOCKING,
+                    severity=entity_severity,
                     subsystem="entity",
                     issue=f"Entity not preserved: {ent.name!r}",
                     evidence="expected verbatim occurrence in target",
@@ -931,11 +951,21 @@ def verify_output(
             )
 
     # Epistemic: forbidden drift targets must not appear.
+    # TRA-072 (round 4): severity is arbitrated by the PolicyResolver.
+    # Epistemic Fidelity (P5) vs Target Fluency (P6) — if P5 wins (default),
+    # severity is BLOCKING; if P6 wins, WARNING.
+    epistemic_severity = (
+        Severity.BLOCKING
+        if _POLICY_RESOLVER.wins(
+            PolicyPriority.EPISTEMIC_FIDELITY, PolicyPriority.TARGET_FLUENCY
+        )
+        else Severity.WARNING
+    )
     for fm in _forbidden_from_module(ctx):
         if fm.forbidden_target in target:
             diagnostics.append(
                 Diagnostic(
-                    severity=Severity.BLOCKING,
+                    severity=epistemic_severity,
                     subsystem="epistemic",
                     issue=(
                         f"Epistemic drift: {fm.forbidden_target!r} (from {fm.source!r})"
