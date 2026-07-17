@@ -2791,3 +2791,343 @@ class TestTRA099CLIPassesRegistry:
             f"TRA-099 regression: CLI did not use the stub fr-en module. "
             f"Output should contain 'hello' (stub glossary), got:\n{output_text}"
         )
+
+
+# =========================================================================
+# TRA-038 (round 4 remediation) — Wire 3 unreachable exception types in
+# production code paths. Round 3 made them routable; Round 4 wires the
+# actual raise sites so the recovery procedures are no longer dead code.
+# =========================================================================
+
+
+class TestTRA038UnknownTermRaisedInProduction:
+    """TRA-038 (round 4 remediation): _rule_translate must log UnknownTerm
+    to unresolved_ambiguities when a CJK token (Unicode range U+4E00..U+9FFF)
+    has no glossary match, no entity match, no epistemic-lexicon match, and
+    is not a common particle (stop-word).
+
+    Design note: the unknown term is LOGGED (not raised) so the pipeline
+    can continue with the source term preserved. The recovery procedure
+    recover_unknown_term adds it to unresolved_ambiguities with WARNING
+    severity. This surfaces unknown terms to the L4 audit trail without
+    halting the pipeline.
+    """
+
+    def test_unknown_cjk_term_logged_to_ambiguities(self) -> None:
+        """A CJK token with no glossary/entity/epistemic match and not a
+        stop-word must be logged to unresolved_ambiguities (TRA-038).
+        """
+        from tra.isa import _rule_translate
+
+        # 量子纠缠 (quantum entanglement) is a real CJK term that is NOT
+        # in the ZH-EN glossary, NOT an entity, NOT in the epistemic lexicon,
+        # and NOT a stop-word.
+        ambiguities: list[str] = []
+        _rule_translate("量子纠缠", {}, [], unresolved_ambiguities=ambiguities)
+        assert any("量子纠缠" in a and "UNKNOWN_TERM" in a for a in ambiguities), (
+            f"UnknownTerm for 量子纠缠 should be logged to "
+            f"unresolved_ambiguities, got: {ambiguities}"
+        )
+
+    def test_stop_word_does_not_log(self) -> None:
+        """Common CJK particles (的/是/在/了 etc.) must NOT be logged as
+        UnknownTerm even though they're not in the glossary.
+        """
+        from tra.isa import _rule_translate
+
+        # These are all common particles that should pass through silently.
+        for stop_word in ("的", "是", "在", "了", "和", "与", "或"):
+            ambiguities: list[str] = []
+            result, _ = _rule_translate(
+                stop_word, {}, [], unresolved_ambiguities=ambiguities
+            )
+            # Should NOT log; should return the stop-word unchanged.
+            assert not ambiguities, (
+                f"Stop-word {stop_word!r} should not be logged, got: {ambiguities}"
+            )
+            assert stop_word in result, (
+                f"Stop-word {stop_word!r} should pass through, got: {result!r}"
+            )
+
+    def test_known_cjk_term_does_not_log(self) -> None:
+        """A CJK term that IS in the glossary must NOT be logged as
+        UnknownTerm."""
+        from tra.isa import _rule_translate
+
+        ambiguities: list[str] = []
+        result, _ = _rule_translate(
+            "成立", {"成立": "Confirmed"}, [], unresolved_ambiguities=ambiguities
+        )
+        assert not ambiguities, (
+            f"Known term 成立 should not be logged, got: {ambiguities}"
+        )
+        assert "Confirmed" in result
+
+
+class TestTRA038CertaintyConflictRaisedInLLMPath:
+    """TRA-038 (round 4 remediation): translate_segment's LLM path must
+    raise CertaintyConflict when the LLM returns a forbidden drift target
+    for a source term in the epistemic lexicon.
+
+    Example: source '成立' → canonical 'Confirmed'. If the LLM returns
+    'Valid' or 'True' (both in FORBIDDEN_TARGETS), raise CertaintyConflict.
+    The kernel routes it through _recover → recover_certainty_conflict,
+    which preserves the canonical marker and adds to ambiguities.
+    """
+
+    def test_llm_returning_forbidden_target_raises_certainty_conflict(
+        self, tmp_path: Path
+    ) -> None:
+        """When the LLM returns a forbidden drift target for an epistemic
+        term, translate_segment must raise CertaintyConflict (TRA-038).
+        """
+        from tra.cache import TranslationCache
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.exceptions import CertaintyConflict
+        from tra.isa import translate_segment
+        from tra.memory import ConformanceLevel, RuntimeContext
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        # Build a context with the ZH-EN module so the epistemic lexicon
+        # is available.
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        # Populate glossary with the canonical mapping.
+        from tra.memory import GlossaryEntry, GlossaryStatus
+
+        ctx.glossary_cache = [
+            GlossaryEntry(
+                source="成立",
+                target="Confirmed",
+                status=GlossaryStatus.CANONICAL,
+                rule_id="zh-en-epistemic",
+                confidence_note=1.0,
+            )
+        ]
+        cache = TranslationCache(str(tmp_path / "cache"), enabled=False)
+        evidence = EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        # LLM returns "Valid" — a forbidden drift target for 成立.
+        def bad_llm(_src: str, _ctx: RuntimeContext) -> str:
+            return "Valid"
+
+        with pytest.raises(CertaintyConflict) as exc_info:
+            translate_segment(
+                "成立",
+                ctx,
+                cache,
+                evidence,
+                audit,
+                llm_translate=bad_llm,
+            )
+        assert "成立" in str(exc_info.value) or "成立" in getattr(
+            exc_info.value, "term", ""
+        ), f"CertaintyConflict should mention the term, got: {exc_info.value}"
+
+    def test_llm_returning_canonical_target_does_not_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """When the LLM returns the canonical target, no CertaintyConflict."""
+        from tra.cache import TranslationCache
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import translate_segment
+        from tra.memory import (
+            ConformanceLevel,
+            GlossaryEntry,
+            GlossaryStatus,
+            RuntimeContext,
+        )
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        ctx.glossary_cache = [
+            GlossaryEntry(
+                source="成立",
+                target="Confirmed",
+                status=GlossaryStatus.CANONICAL,
+                rule_id="zh-en-epistemic",
+                confidence_note=1.0,
+            )
+        ]
+        cache = TranslationCache(str(tmp_path / "cache"), enabled=False)
+        evidence = EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        def good_llm(_src: str, _ctx: RuntimeContext) -> str:
+            return "Confirmed"
+
+        # Should NOT raise.
+        result = translate_segment(
+            "成立",
+            ctx,
+            cache,
+            evidence,
+            audit,
+            llm_translate=good_llm,
+        )
+        assert "Confirmed" in result.translation
+
+
+class TestTRA038EntityAmbiguityRaisedInBuildEntityTable:
+    """TRA-038 (round 4 remediation): build_entity_table must raise
+    EntityAmbiguity when entity_type_hint returns None for a token that
+    matches multiple entity patterns (e.g., both PRODUCT_RE and ACRONYM_RE).
+
+    The kernel routes it through _recover → recover_entity_ambiguity,
+    which treats the token as an Entity (immutable) and adds to ambiguities.
+    """
+
+    def test_ambiguous_token_logs_entity_ambiguity(self, tmp_path: Path) -> None:
+        """When a token matches multiple entity patterns and the module's
+        entity_type_hint returns None (ambiguous), build_entity_table must
+        log the ambiguity to unresolved_ambiguities (TRA-038).
+
+        "VMM" matches BOTH ACRONYM_RE (3 uppercase letters) AND PRODUCT_RE
+        (with the VMM suffix as a product signal). Without an authoritative
+        hint from the module, the classifier can't decide — this is a
+        genuine ambiguity that should surface to the L4 audit trail.
+
+        Design note: the ambiguity is LOGGED (not raised) so the pipeline
+        can continue with the best-guess classification. The recovery
+        procedure recover_entity_ambiguity adds the token to
+        unresolved_ambiguities with WARNING severity.
+        """
+        from tra.anchor import build_structural_map
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import build_entity_table
+        from tra.memory import ConformanceLevel, RuntimeContext
+        from tra.modules.registry import ModuleInterface
+
+        def _style_profile():
+            return {
+                "voice": "technical",
+                "sentence_complexity": "moderate",
+                "epistemic_mapping": {},
+                "punctuation_rules": {},
+            }
+
+        # Stub that returns None for "VMM" (ambiguous: matches both
+        # ACRONYM_RE and PRODUCT_RE).
+        stub_ambiguous = ModuleInterface(
+            name="stub_ambiguous",
+            kind="language",
+            get_glossary_mappings=lambda: {},
+            get_style_profile=_style_profile,
+            apply_rules=lambda src, _dir: src,
+            is_forbidden=lambda _src, _tgt: False,
+            get_forbidden_targets=lambda: {},
+            entity_type_hint=lambda _token: None,  # Always ambiguous
+            apply_zh_rules=lambda text: text,
+            metadata={"direction": "ZH -> EN"},
+        )
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=stub_ambiguous.get_style_profile(),
+            module=stub_ambiguous,
+        )
+        evidence = EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        # "VMM" matches both ACRONYM_RE and PRODUCT_RE. With
+        # entity_type_hint returning None, build_entity_table should log
+        # the ambiguity to unresolved_ambiguities (not raise).
+        source = "VMM is a module."
+        smap = build_structural_map(source)
+        # Should NOT raise — should log and continue.
+        table = build_entity_table(source, smap, ctx, evidence, audit)
+        # The ambiguity should be logged to unresolved_ambiguities.
+        assert any(
+            "VMM" in a and "ENTITY_AMBIGUITY" in a for a in ctx.unresolved_ambiguities
+        ), (
+            f"EntityAmbiguity for VMM should be logged to "
+            f"unresolved_ambiguities, got: {ctx.unresolved_ambiguities}"
+        )
+        # The entity should still be in the table (treated as immutable).
+        assert any(e.name == "VMM" for e in table), (
+            f"VMM should be in entity table despite ambiguity, got: "
+            f"{[e.name for e in table]}"
+        )
+
+    def test_unambiguous_token_does_not_raise(self, tmp_path: Path) -> None:
+        """When entity_type_hint returns a concrete type, no
+        EntityAmbiguity."""
+        from tra.anchor import build_structural_map
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import build_entity_table
+        from tra.memory import ConformanceLevel, RuntimeContext
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        # ZHENModule.entity_type_hint returns a concrete type for known tokens.
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        evidence = EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        source = "RustVMM scales horizontally."
+        smap = build_structural_map(source)
+        # Should NOT raise.
+        table = build_entity_table(source, smap, ctx, evidence, audit)
+        assert any(e.name == "RustVMM" for e in table)

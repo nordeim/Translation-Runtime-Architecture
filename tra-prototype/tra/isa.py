@@ -313,7 +313,19 @@ def build_entity_table(
     """Isolate immutable identifiers (Spec §3). All mutable=False.
 
     Invariant: entities excluded from translation; casing/punctuation preserved.
+
+    TRA-038 (round 4 remediation): when a token matches multiple entity
+    patterns (e.g., both ACRONYM_RE and PRODUCT_RE) AND the module's
+    entity_type_hint returns None (no authoritative classification), the
+    ambiguity is logged to unresolved_ambiguities via the recovery procedure
+    (recover_entity_ambiguity) and the token is treated as Entity (immutable).
+    This surfaces ambiguous tokens to the L4 audit trail without halting
+    the pipeline — the entity table still completes with the best-guess
+    classification.
     """
+    from .recovery import recover_entity_ambiguity
+    from .utils import ACRONYM_RE, PRODUCT_RE, VERSION_RE
+
     candidates = extract_entities(source)
     table: list[Entity] = []
     seen: set[str] = set()
@@ -325,6 +337,27 @@ def build_entity_table(
         # so we use model_copy to apply the hint + context rather than
         # mutating in place.
         hint = _module(ctx).entity_type_hint(ent.name)
+        # TRA-038 (round 4): if the module hint is None (no authoritative
+        # classification) AND the token matches multiple entity patterns,
+        # log the ambiguity via the recovery procedure (which adds it to
+        # unresolved_ambiguities with WARNING severity) and continue with
+        # the best-guess classification. This surfaces ambiguous tokens to
+        # the L4 audit trail without halting the pipeline.
+        if hint is None:
+            pattern_matches = [
+                pat_name
+                for pat_name, pat in (
+                    ("VERSION_RE", VERSION_RE),
+                    ("ACRONYM_RE", ACRONYM_RE),
+                    ("PRODUCT_RE", PRODUCT_RE),
+                )
+                if pat.fullmatch(ent.name)
+            ]
+            if len(pattern_matches) > 1:
+                # Log the ambiguity without raising — the recovery procedure
+                # adds it to unresolved_ambiguities so the L4 audit trail
+                # captures the decision point.
+                recover_entity_ambiguity(ent.name, ctx.unresolved_ambiguities)
         final = ent.model_copy(
             update={
                 "type": hint if hint is not None else ent.type,
@@ -410,13 +443,32 @@ def translate_segment(
             # invalid translations. Degrade to the rule path instead.
             if not target:
                 raise ValueError("llm_translate returned empty/None output")
+            # TRA-038 (round 4): detect epistemic drift in LLM output.
+            # If the LLM returned a forbidden drift target for a source term
+            # in the epistemic lexicon, raise CertaintyConflict. This must
+            # be checked BEFORE the except block so it propagates to the
+            # kernel's _recover (not caught by the graceful-degradation
+            # handler, which would silently mask the conflict).
+            _raise_on_certainty_conflict(source_segment, target, ctx)
+        except TRAException:
+            # TRA-038 (round 4): CertaintyConflict (and other TRAExceptions
+            # raised inside the try block) must propagate to the kernel's
+            # _recover, NOT be caught by the graceful-degradation handler.
+            # The handler below is for non-TRA exceptions (LLM client errors,
+            # network issues, ValueError from empty output) that should
+            # degrade to the rule path.
+            raise
         except Exception as exc:  # noqa: BLE001 - graceful degradation (§6.5.4)
             # LLM unavailable / errored: degrade to the deterministic rule
             # path so translation still completes (never self-score, never
             # raise). The rule path is weaker on fluency but preserves all
             # BLOCKING invariants (factual / entity / terminology / epistemic).
             target, basis = _rule_translate(
-                source_segment, glossary, entities, module=ctx.module
+                source_segment,
+                glossary,
+                entities,
+                module=ctx.module,
+                unresolved_ambiguities=ctx.unresolved_ambiguities,
             )
             # Emit ONE complete audit record (evidence + degraded flag) and
             # return early. Previously the code fell through to emit a SECOND
@@ -454,7 +506,12 @@ def translate_segment(
             )
             return result
     else:
-        target, basis = _rule_translate(source_segment, glossary, entities)
+        target, basis = _rule_translate(
+            source_segment,
+            glossary,
+            entities,
+            unresolved_ambiguities=ctx.unresolved_ambiguities,
+        )
 
     rec = EvidenceRecord(
         type=EvidenceType.LLM_DECISION,
@@ -477,11 +534,19 @@ def _rule_translate(
     glossary: dict[str, str],
     entities: list[Entity],
     module: Any = None,
+    unresolved_ambiguities: list[str] | None = None,
 ) -> tuple[str, str]:
     """Deterministic canonical translation via glossary + entity + epistemic.
 
     If ``module`` is supplied (TRA-002), use its rule layer; otherwise fall
     back to the module-level ``_MODULE`` singleton (backward compat).
+
+    TRA-038 (round 4 remediation): logs UnknownTerm to unresolved_ambiguities
+    when a CJK token (U+4E00..U+9FFF) has no glossary match, no entity match,
+    no epistemic-lexicon match, and is not a common particle (stop-word).
+    The logging is non-halting — the pipeline continues with the source term
+    preserved. This surfaces unknown terms to the L4 audit trail so a
+    forensic auditor can reconstruct the decision points.
     """
     mod = module if module is not None else _MODULE
     out = segment
@@ -500,7 +565,200 @@ def _rule_translate(
     # 4. Entities are preserved verbatim (already in source form; no
     #    transformation needed — the rule path never alters entities).
     #    TRA-073 (round 3): removed dead `out = out` no-op loop.
+    # 5. TRA-038 (round 4): detect unknown CJK terms that survived all
+    #    substitution passes. A CJK token with no match in glossary, entities,
+    #    or epistemic lexicon — and not a common particle — is "unknown" and
+    #    is logged to unresolved_ambiguities (non-halting).
+    if unresolved_ambiguities is not None:
+        _log_unknown_cjk(out, glossary, entities, unresolved_ambiguities)
     return out, "rule-based"
+
+
+# Common CJK grammatical particles that are NOT "terms" in the glossary sense.
+# Raising UnknownTerm for these would produce false positives. This list is
+# intentionally conservative — only high-frequency function words.
+_CJK_STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "的",
+        "是",
+        "在",
+        "了",
+        "和",
+        "与",
+        "或",
+        "及",
+        "等",
+        "也",
+        "都",
+        "就",
+        "还",
+        "不",
+        "没",
+        "有",
+        "这",
+        "那",
+        "一",
+        "个",
+        "些",
+        "上",
+        "下",
+        "中",
+        "里",
+        "外",
+        "为",
+        "对",
+        "从",
+        "到",
+        "向",
+        "以",
+        "于",
+        "把",
+        "被",
+        "让",
+        "使",
+        "给",
+        "而",
+        "且",
+        "则",
+        "若",
+        "如",
+        "可",
+        "能",
+        "会",
+        "需",
+        "应",
+        "该",
+        "须",
+        "要",
+        "想",
+        "做",
+        "看",
+        "听",
+        "说",
+        "写",
+        "读",
+        "学",
+        "用",
+        "生",
+        "死",
+        "好",
+        "坏",
+        "大",
+        "小",
+        "多",
+        "少",
+        "高",
+        "低",
+        "长",
+        "短",
+        "新",
+        "旧",
+        "早",
+        "晚",
+        "前",
+        "后",
+        "左",
+        "右",
+        "内",
+        "本",
+        "末",
+        "始",
+        "终",
+        "首",
+        "尾",
+        "再",
+        "又",
+        "只",
+        "才",
+        "已",
+        "曾",
+        "将",
+        "正",
+        "刚",
+        "快",
+        "慢",
+    }
+)
+
+# CJK Unified Ideographs range (U+4E00..U+9FFF).
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def _log_unknown_cjk(
+    text: str,
+    glossary: dict[str, str],
+    entities: list[Entity],
+    unresolved_ambiguities: list[str],
+) -> None:
+    """Log UnknownTerm for each CJK token that has no match in the glossary,
+    entity table, or epistemic lexicon, and is not a stop-word.
+
+    TRA-038 (round 4): previously, unknown CJK terms passed through silently.
+    Now they are logged to unresolved_ambiguities via the recovery procedure
+    (recover_unknown_term) so the L4 audit trail captures the decision points.
+    Non-halting — the pipeline continues with the source term preserved.
+    """
+    from .recovery import recover_unknown_term
+
+    entity_names = {e.name for e in entities}
+    epistemic_sources = set(zh_en.EPISTEMIC_LEXICON.keys())
+    glossary_sources = set(glossary.keys())
+    known_sources = glossary_sources | epistemic_sources | entity_names
+    for match in _CJK_RE.finditer(text):
+        token = match.group(0)
+        # Skip if the token is a stop-word.
+        if token in _CJK_STOP_WORDS:
+            continue
+        # Skip if the token is exactly a known source.
+        if token in known_sources:
+            continue
+        # Skip if any known source is a substring of the token (e.g.,
+        # "系统成立" contains "成立" which is in the epistemic lexicon).
+        if any(src in token for src in known_sources if len(src) >= 2):
+            continue
+        # Skip if any single-char stop-word is the entire token.
+        if len(token) == 1 and token in _CJK_STOP_WORDS:
+            continue
+        # The token is unknown — log it via the recovery procedure (non-halting).
+        recover_unknown_term(token, unresolved_ambiguities)
+
+
+def _raise_on_certainty_conflict(
+    source_segment: str,
+    target: str,
+    ctx: RuntimeContext,
+) -> None:
+    """Raise CertaintyConflict if the LLM returned a forbidden drift target
+    for a source term in the epistemic lexicon.
+
+    TRA-038 (round 4): previously, the LLM path never validated epistemic
+    drift — a compromised or hallucinating LLM could return "Valid" for
+    source "成立" (canonical: "Confirmed") and it would pass through. Now
+    the L4 audit trail will contain CERTAINTY_CONFLICT records so a
+    forensic auditor can reconstruct these decision points.
+
+    The kernel routes CertaintyConflict through _recover →
+    recover_certainty_conflict, which preserves the canonical marker and
+    adds the term to unresolved_ambiguities.
+    """
+    from .exceptions import CertaintyConflict
+    from .modules import zh_en as zh_en_module
+
+    # Check each epistemic source term: if it appears in the source segment,
+    # the LLM output must NOT contain any of its forbidden drift targets.
+    for src_term, _canonical_target in zh_en_module.EPISTEMIC_LEXICON.items():
+        if src_term not in source_segment:
+            continue
+        # Look up the forbidden targets for this source term.
+        # FORBIDDEN_TARGETS values are slash-separated strings like
+        # "Valid/True/Correct" — split on "/" to get individual targets.
+        forbidden_str = zh_en_module.FORBIDDEN_TARGETS.get(src_term, "")
+        if not forbidden_str:
+            continue
+        forbidden_targets = [t.strip() for t in forbidden_str.split("/") if t.strip()]
+        for forbidden_target in forbidden_targets:
+            if forbidden_target in target:
+                raise CertaintyConflict(term=src_term)
 
 
 # --------------------------------------------------------------------------- #
