@@ -12,7 +12,8 @@ Specification-first repo. TRA = Translation Runtime Architecture v1.0 — normat
 |:--|:--|
 | `TRA-SPECIFICATION.md` | Authoritative master spec (Kernel, Memory, ISA, Runtime, Policy, Exceptions, QA, Conformance, Modules). Source of truth. |
 | `TRA-ISA-REFERENCE.md` | Expanded contracts for the six ISA instructions. Companion to Spec §3. |
-| `TRA-MODULE-ZH-EN.md` | Language Module example (ZH↔EN bridge). Template for new modules. |
+| `TRA-MODULE-ZH-EN.md` | Language Module example (ZH↔EN bridge). Linguistic spec for the bundled module. |
+| `TRA-MODULE-AUTHORING.md` | Module authoring guide — engineering contract for new Language/Domain/Formatting modules (TRA-100). |
 | `TRA-BENCHMARK-SUITE.md` | Representative test categories (S/F/T/D/E) seeded with concrete cases, intended to grow toward 100+, for L3/L4 certification. |
 | `TRA-CONFORMANCE-GUIDE.md` | Auditor checklist for L1–L4 certification. |
 
