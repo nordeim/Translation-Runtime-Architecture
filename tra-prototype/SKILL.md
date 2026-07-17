@@ -240,7 +240,7 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **199 tests** across 18 test
+All four gates must be green. The full suite is **210 tests** across 18 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
   (34 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 032,
@@ -330,13 +330,26 @@ security fixes (TRA-076/077/078) verified holding. See
 register and `../docs/audit/round4/remediation_plan_r4.md` for the
 5-batch TDD remediation plan.
 
+**Round 4 remediation** (commits `f226582` through `e54b7a7`, HEAD `e54b7a7`):
+7 of 47 issues fixed via TDD. Test count 199 → 210 (+11 new regression tests).
+- TRA-C4-013 (BLOCKING): tra-prototype/README.md CLI examples fixed (`f226582`).
+- TRA-C4-001..017 (13 doc staleness findings): refreshed across CLAUDE.md,
+  tra-prototype/README.md, tra-prototype/SKILL.md, implementation_plan.md,
+  AGENTS.md, status.md (`929c879`).
+- TRA-A4-011: removed dead `repaired = repaired` no-op in isa.py (`524c598`).
+- TRA-B4-009: added regression tests for TRA-016/017/026 (`524c598`).
+- TRA-D4-014: deleted redundant tests/run_e2e_translation.py (`524c598`).
+- TRA-F4-006: register() now validates get_style_profile() return shape (`524c598`).
+- TRA-F4-007: _select_module now matches by full direction, not just source (`524c598`).
+- TRA-099: CLI translate now passes registry to TRAKernel + normalizes --lang (`e54b7a7`).
+
 **Remaining persistent findings** (not yet fixed): TRA-001 (partial, full
 per-leaf segment translation), TRA-038 (partial, exception classes routable
 but never raised in production), TRA-040 (EXCEPTION_HANDLER/HALT_ERROR not
 KernelStates — intentional design decision pending spec change), TRA-042
 (structural verification heading-count-only), TRA-072 (PolicyResolver
-universal arbitration), TRA-079 (cache HMAC integrity), TRA-099 (CLI
---registry flag), TRA-100 (module authoring guide). Plus test-coverage
+universal arbitration), TRA-079 (cache HMAC integrity), TRA-100 (module
+authoring guide). Plus test-coverage
 gaps (TRA-052/055/056/057/058/090/091/092/094/095) and doc staleness
 residuals (TRA-061/064/065/066/067). See
 `../docs/audit/round4/master_findings_register_r4.json` for the full

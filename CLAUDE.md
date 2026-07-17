@@ -52,7 +52,7 @@ ruff format . && ruff check . && mypy --strict tra && pytest tests
 - **Phase 7 (documentation & delivery)** has not started: no ADRs, no API reference, no module authoring guide, no conformance self-audit.
 - **Benchmark coverage (TRA-031, improved):** 22 of 24 spec cases implemented (S-03 and E-03 still missing); spec target is 100+.
 
-The full 41-finding Round 2 audit register is in `docs/audit/round2/TRA_audit_findings_register_r2.xlsx`; the narrative report is `docs/audit/round2/TRA_Prototype_Audit_Report_r2.docx`. Round 1 deliverables are in `docs/audit/` (top level). Round 3 deliverables (36 findings: 2 BLOCKING both fixed, 18 WARNING, 16 INFO) are in `docs/audit/round3/`. Round 4 deliverables (47 issues + 19 positive verifications: 1 BLOCKING, 11 WARNING, 35 INFO) are in `docs/audit/round4/`. The current test count is **199 across 18 test files** (was 174 across 16 at Round 3 baseline).
+The full 41-finding Round 2 audit register is in `docs/audit/round2/TRA_audit_findings_register_r2.xlsx`; the narrative report is `docs/audit/round2/TRA_Prototype_Audit_Report_r2.docx`. Round 1 deliverables are in `docs/audit/` (top level). Round 3 deliverables (36 findings: 2 BLOCKING both fixed, 18 WARNING, 16 INFO) are in `docs/audit/round3/`. Round 4 deliverables (47 issues + 19 positive verifications: 1 BLOCKING, 11 WARNING, 35 INFO) are in `docs/audit/round4/`. The current test count is **210 across 18 test files** (was 174 across 16 at Round 3 baseline; +36 from Round 4 remediation commits `f226582` through `e54b7a7`).
 
 ## The mental model (requires reading multiple files)
 
