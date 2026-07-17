@@ -2617,3 +2617,177 @@ class TestTRA_F4_007_SelectModuleFullDirectionMatch:
             f"Expected fr_en (source-only fallback), got "
             f"{getattr(selected, 'name', '?')}."
         )
+
+
+# =========================================================================
+# TRA-099 (round 4) — CLI translate does not pass registry to TRAKernel
+# =========================================================================
+
+
+class TestTRA099CLIPassesRegistry:
+    """TRA-099 (round 4): `python -m tra_cli translate` must pass a registry
+    to TRAKernel so that registered modules are picked up by the kernel's
+    _select_module (TRA-002). Previously the CLI constructed
+    `TRAKernel(cfg, interactive=interactive)` with no `registry=` kwarg,
+    so the kernel always fell back to ZHENModule — silently overriding
+    the user's --lang override if it wasn't ZH -> EN.
+
+    Fix: auto-build the default registry (build_default_registry()) in
+    the CLI and pass it to TRAKernel. This way:
+    - The default ZHENModule is always available
+    - Future modules added to build_default_registry() are picked up
+    - The kernel's _select_module (fixed in TRA-F4-007 for full-direction
+      matching) picks the right module based on language_pair
+    """
+
+    def test_translate_command_passes_registry(self, tmp_path: Path) -> None:
+        """The translate CLI command must construct TRAKernel with a
+        registry. We verify this by inspecting the source of tra_cli.translate
+        and asserting it references build_default_registry (or equivalent).
+        """
+        from pathlib import Path as PathT
+
+        cli_path = PathT(__file__).parent.parent / "tra_cli.py"
+        source = cli_path.read_text(encoding="utf-8")
+
+        # The translate function must reference build_default_registry
+        # (or import it). This is a static check that the CLI wires the
+        # registry through.
+        assert "build_default_registry" in source or "registry=" in source, (
+            "TRA-099 regression: tra_cli.py does not reference "
+            "build_default_registry or pass registry= to TRAKernel. "
+            "The CLI silently falls back to ZHENModule, ignoring any "
+            "non-ZH->EN --lang override."
+        )
+
+    def test_translate_command_uses_registry_kwarg(self, tmp_path: Path) -> None:
+        """The translate CLI command must construct TRAKernel with the
+        `registry=` keyword argument (not just import build_default_registry
+        without using it).
+        """
+        import re
+        from pathlib import Path as PathT
+
+        cli_path = PathT(__file__).parent.parent / "tra_cli.py"
+        source = cli_path.read_text(encoding="utf-8")
+
+        # Find the TRAKernel construction in the translate function.
+        # It must pass registry= as a kwarg.
+        pattern = re.compile(r"TRAKernel\([^)]*registry\s*=", re.DOTALL)
+        matches = pattern.findall(source)
+        assert matches, (
+            "TRA-099 regression: tra_cli.py constructs TRAKernel without "
+            "the registry= kwarg. The CLI must pass "
+            "TRAKernel(cfg, registry=registry, interactive=interactive) "
+            "so registered modules are picked up by _select_module."
+        )
+
+    def test_translate_with_non_zh_lang_uses_registry(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """End-to-end: when --lang is a non-ZH->EN pair AND a module for
+        that pair is registered in build_default_registry(), the CLI must
+        use that module (not fall back to ZHENModule).
+
+        We verify this by:
+        1. Monkeypatching build_default_registry to include a stub fr-en
+           module with a recognizable glossary.
+        2. Running the CLI translate command with --lang fr-en.
+        3. Asserting the output contains the stub module's glossary term
+           (which ZHENModule would never produce).
+        """
+        # Build a stub fr-en module that translates "bonjour" → "hello"
+        # (a term ZHENModule would never translate).
+        from tra.modules.registry import ModuleInterface
+        from tra.modules.zh_en import ZHENModule
+
+        def _stub_style_profile() -> dict[str, str]:
+            return {
+                "voice": "technical",
+                "sentence_complexity": "moderate",
+                "epistemic_mapping": {},
+                "punctuation_rules": {},
+            }
+
+        # Build a stub fr-en module. We can't easily construct a full
+        # language module, so we use ModuleInterface with custom callables.
+        zh_en_iface = ZHENModule().as_interface()
+        stub_fr_en = ModuleInterface(
+            name="fr_en_stub",
+            kind="language",
+            get_glossary_mappings=lambda: {"bonjour": "hello"},
+            get_style_profile=_stub_style_profile,
+            apply_rules=lambda src, _dir: src,
+            is_forbidden=lambda _src, _tgt: False,
+            get_forbidden_targets=lambda: {},
+            entity_type_hint=lambda _token: None,
+            apply_zh_rules=lambda text: text,
+            metadata={"direction": "FR -> EN"},
+        )
+
+        # Monkeypatch build_default_registry to include our stub.
+        def _patched_registry():
+            from tra.modules.registry import ModuleRegistry
+
+            reg = ModuleRegistry()
+            reg.register(zh_en_iface)
+            reg.register(stub_fr_en)
+            return reg
+
+        monkeypatch.setattr(
+            "tra.modules.registry.build_default_registry", _patched_registry
+        )
+        # Also patch the tra_cli module's reference (it imports at function
+        # call time, so patching the source module is enough).
+
+        # Create a test input file.
+        input_md = tmp_path / "input.md"
+        input_md.write_text("# bonjour\n\nbonjour le monde\n", encoding="utf-8")
+        output_md = tmp_path / "output.md"
+
+        # Run the CLI via CliRunner.
+        from click.testing import CliRunner
+        from tra_cli import cli
+
+        runner = CliRunner()
+        # Use a config that points to tmp_path for artifacts.
+        config_yaml = tmp_path / "config.yaml"
+        config_yaml.write_text(
+            "language_pair: FR -> EN\n"
+            "domain: test\n"
+            "conformance_level: L1_BASIC\n"
+            "model_endpoint: rule-based\n"
+            "model_version: test\n"
+            f"base_dir: {tmp_path}\n"
+            f"cache_directory: {tmp_path}/cache\n"
+            f"compilation_dir: {tmp_path}/art\n"
+            f"audit_trace: {tmp_path}/audit.jsonl\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "--config",
+                str(config_yaml),
+                "translate",
+                str(input_md),
+                "--lang",
+                "fr-en",
+                "--level",
+                "L1",
+                "-o",
+                str(output_md),
+            ],
+        )
+        assert result.exit_code == 0, (
+            f"CLI translate failed: {result.output}\nexception: {result.exception}"
+        )
+        # The output must contain "hello" (the stub fr-en module's glossary
+        # translation of "bonjour"). ZHENModule would never produce "hello"
+        # from "bonjour".
+        output_text = output_md.read_text(encoding="utf-8")
+        assert "hello" in output_text.lower(), (
+            f"TRA-099 regression: CLI did not use the stub fr-en module. "
+            f"Output should contain 'hello' (stub glossary), got:\n{output_text}"
+        )

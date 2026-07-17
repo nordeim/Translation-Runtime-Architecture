@@ -48,6 +48,27 @@ def _resolve_level(value: str) -> ConformanceLevel:
         return ConformanceLevel(canonical)
 
 
+def _normalize_language_pair(value: str) -> str:
+    """Normalize a --lang CLI value to the canonical 'XX -> YY' form.
+
+    TRA-099 (round 4): the CLI accepts both 'zh-en' (hyphen shorthand) and
+    'ZH -> EN' (canonical arrow form). The kernel's _select_module compares
+    the language_pair against module direction metadata (canonical form),
+    so we normalize hyphens to ' -> ' to ensure the match works.
+    """
+    v = value.strip()
+    if "->" in v:
+        # Already canonical form; just normalize spacing/case.
+        src, _, tgt = v.partition("->")
+        return f"{src.strip().upper()} -> {tgt.strip().upper()}"
+    # Hyphen form: 'zh-en' → 'ZH -> EN'
+    if "-" in v:
+        src, _, tgt = v.rpartition("-")
+        return f"{src.strip().upper()} -> {tgt.strip().upper()}"
+    # No separator; return as-is (will likely fail later).
+    return v.upper()
+
+
 @click.group()
 @click.option(
     "--config",
@@ -89,7 +110,9 @@ def translate(
     # rather than mutating in place.
     updates: dict[str, Any] = {}
     if lang:
-        updates["language_pair"] = lang
+        # TRA-099 (round 4): normalize --lang to canonical 'XX -> YY' form
+        # so _select_module can match it against module direction metadata.
+        updates["language_pair"] = _normalize_language_pair(lang)
     if level:
         updates["conformance_level"] = _resolve_level(level)
     if updates:
@@ -104,7 +127,16 @@ def translate(
     from tra.exceptions import ConformanceFailure
     from tra.kernel import TRAKernel
 
-    kernel = TRAKernel(cfg, interactive=interactive)
+    # TRA-099 (round 4): auto-build the default registry and pass it to
+    # TRAKernel so that registered modules are picked up by _select_module
+    # (TRA-002). Previously the CLI constructed TRAKernel without a registry,
+    # silently falling back to ZHENModule and ignoring any non-ZH->EN --lang
+    # override. Now _select_module (fixed in TRA-F4-007 for full-direction
+    # matching) picks the right module based on language_pair.
+    from tra.modules.registry import build_default_registry
+
+    registry = build_default_registry()
+    kernel = TRAKernel(cfg, registry=registry, interactive=interactive)
     try:
         target = kernel.run(input_md)
     except ConformanceFailure as exc:
