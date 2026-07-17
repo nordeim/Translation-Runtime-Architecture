@@ -1,0 +1,36 @@
+TRA Round 4 Audit — Master Findings Register Summary
+============================================================
+
+HEAD audited: 805a8f8
+Total findings (deduplicated): 66
+
+By severity (all findings, including positive verifications):
+  BLOCKING  : 1
+  WARNING   : 20
+  INFO      : 45
+
+By finding type:
+  issue                    : 47
+  positive_verification    : 19
+
+Issues only (excluding positive verifications):
+  Total issues: 47
+  BLOCKING  : 1
+  WARNING   : 11
+  INFO      : 35
+
+By track:
+  A4: 10
+  B4: 15
+  C4: 15
+  D4: 14
+  E4: 14
+  F4: 6
+
+By Round 3 status (normalized):
+  persistent               : 32
+  new                      : 13
+  partial                  : 7
+  fixed                    : 7
+  verified-holding         : 4
+  fixed-and-verified       : 3

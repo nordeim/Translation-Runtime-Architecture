@@ -1,0 +1,36 @@
+{
+  "total_findings": 66,
+  "by_severity_all": {
+    "BLOCKING": 1,
+    "WARNING": 20,
+    "INFO": 45
+  },
+  "by_finding_type": {
+    "issue": 47,
+    "positive_verification": 19
+  },
+  "issues_only": {
+    "count": 47,
+    "by_severity": {
+      "BLOCKING": 1,
+      "WARNING": 11,
+      "INFO": 35
+    }
+  },
+  "by_track": {
+    "A4": 10,
+    "B4": 15,
+    "C4": 15,
+    "D4": 14,
+    "E4": 14,
+    "F4": 6
+  },
+  "by_round3_status_normalized": {
+    "persistent": 32,
+    "new": 13,
+    "partial": 7,
+    "fixed": 7,
+    "verified-holding": 4,
+    "fixed-and-verified": 3
+  }
+}
