@@ -6,6 +6,8 @@ Specification-first repo. TRA = Translation Runtime Architecture v1.0 — normat
 
 ## Files and roles
 
+### Normative spec files (the 5-file product)
+
 | File | Role |
 |:--|:--|
 | `TRA-SPECIFICATION.md` | Authoritative master spec (Kernel, Memory, ISA, Runtime, Policy, Exceptions, QA, Conformance, Modules). Source of truth. |
@@ -13,6 +15,39 @@ Specification-first repo. TRA = Translation Runtime Architecture v1.0 — normat
 | `TRA-MODULE-ZH-EN.md` | Language Module example (ZH↔EN bridge). Template for new modules. |
 | `TRA-BENCHMARK-SUITE.md` | Representative test categories (S/F/T/D/E) seeded with concrete cases, intended to grow toward 100+, for L3/L4 certification. |
 | `TRA-CONFORMANCE-GUIDE.md` | Auditor checklist for L1–L4 certification. |
+
+### Meta-docs (orientation, planning, history)
+
+| File | Role |
+|:--|:--|
+| `README.md` | Repo overview, architecture at a glance, conformance levels, CLI quick-start. |
+| `CLAUDE.md` | Mental model + prototype engine status (file layout, run commands, known gaps). Authoritative for "where behavior lives". |
+| `AGENTS.md` | This file — agent-specific guidance, critical invariants, certification artifacts. |
+| `start-here.md` | Quick-start onboarding for new contributors. |
+| `implementation_plan.md` | Phase 0–7 per-item checkbox state + file structure summary + dependencies. |
+| `prototype.md` | Original prototype design notes. |
+| `review.md` / `review-feedback.md` | Reviewer feedback and risk-mitigation notes that shaped the implementation. |
+| `to_translate.md` | Sample source document used by the E2E test suite (`tests/test_e2e_to_translate.py`). |
+| `status.md` | Historical session log (frozen at commit `4d97aa1`; retained for context only — see banner). |
+
+### Prototype engine (`tra-prototype/`)
+
+| File | Role |
+|:--|:--|
+| `tra-prototype/SKILL.md` | User + agent guidance for the prototype engine (setup, CLI, conformance levels, quality gates, known limitations, audit remediation status). |
+| `tra-prototype/README.md` | Prototype-specific install + commands + architecture + known gaps. |
+| `tra-prototype/tra/` | The engine source — 16 modules (kernel, isa, memory, policy, cache, anchor, config, exceptions, recovery, hitl, reporting, validate, benchmark, diagnostics, utils + modules/ subpackage). |
+| `tra-prototype/tests/` | 199 tests across 18 files — see `tra-prototype/SKILL.md` §7 for the full inventory. |
+| `tra-prototype/pyproject.toml` | 6 runtime deps + 3 dev deps (ruff, mypy, pytest). See `implementation_plan.md` "Dependencies" table. |
+
+### Audit deliverables (`docs/audit/`)
+
+| Path | Round | Findings |
+|:--|:--|:--|
+| `docs/audit/` (top level) | Round 1 | 35 findings (11 BLOCKING / 22 WARNING / 2 INFO) |
+| `docs/audit/round2/` | Round 2 | 41 findings (3 BLOCKING / 25 WARNING / 13 INFO) |
+| `docs/audit/round3/` | Round 3 | 36 findings (2 BLOCKING / 18 WARNING / 16 INFO) + `remediation_plan.md` |
+| `docs/audit/round4/` | Round 4 | 47 issues + 19 positive verifications (1 BLOCKING / 11 WARNING / 35 INFO) + `remediation_plan_r4.md` |
 
 **Cross-referencing:** Use document title and section numbers (e.g., "Spec §5.1"), not filename numeric prefixes. The file prefix numbers (1–4) do not match section order in the spec.
 

@@ -240,11 +240,12 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **174 tests** across 16 test
+All four gates must be green. The full suite is **199 tests** across 18 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
-  (TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 032, 033, 036, 037,
-  039, 041, 044, 049, 050, 051, 053, 054)
+  (34 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 032,
+  033, 036, 037, 038, 039, 041, 049, 050, 051, 053, 054, 073, 074, 075, 076,
+  077, 078, 088, 089, 093, 096, 097, 098)
 - `test_tra043_protocol.py` — LanguageModuleProtocol type-safety tests
 - `test_tra047_config_robustness.py` — BootstrapConfig `from_yaml`/`extra='forbid'` tests
 - `test_tra071_broken_markdown.py` — unclosed-fence structural validation tests
@@ -276,10 +277,11 @@ files, including:
 ### Audit remediation status
 
 **Round 1** (35 findings): 30 fixed, 5 carry over (TRA-001 partial, TRA-006
-fixed in Round 2, TRA-016 persistent dead code, TRA-017 persistent unused
-deps, TRA-026 persistent dead config).
+fixed in Round 2, TRA-016 fixed in Round 2, TRA-017 fixed in Round 3
+remediation commit `a3cd2c1`, TRA-026 fixed in Round 2).
 
-**Round 2** (41 findings): 17 fixed in this session, 24 remain. The 17 fixed:
+**Round 2** (41 findings): 17 fixed in this session, 24 remain (most now
+fixed in Round 3 remediation). The 17 fixed in-session:
 - **TRA-006** — `PolicyResolver` is now consulted in `verify_output` via
   `_POLICY_RESOLVER.wins(TERMINOLOGICAL_CONSISTENCY, TARGET_FLUENCY)`. Severity
   is no longer hard-coded; monkeypatching the resolver changes the diagnostic
@@ -313,14 +315,32 @@ deps, TRA-026 persistent dead config).
 - **TRA-071** — structural validation raises `BrokenMarkdown` for unclosed fences
   (was unreachable because `markdown-it-py` is too lenient).
 
-**Remaining 24 Round 2 findings** (not yet fixed): TRA-001 (partial, full
-per-leaf segment translation), TRA-016 (dead `count_blocking` stub), TRA-017
-(unused deps), TRA-026 (dead `cache.expire` config), TRA-038 (3 of 5 exception
-types never raised), TRA-040 (EXCEPTION_HANDLER/HALT_ERROR not KernelStates),
-TRA-042 (structural verification heading-count-only), TRA-052/055/056/057/058
-(test coverage gaps), TRA-059/060/061/062/063/064/065/066/067/068/069/070 (doc
-staleness + minor code quality). See `../docs/audit/round2/master_findings_register.json`
-for the full machine-readable register.
+**Round 3** (36 findings at HEAD `b783745`): 2 BLOCKING both fixed (TRA-093
+false-positive BROKEN_LINK, TRA-096 `as_interface()` ValidationError),
+18 WARNING, 16 INFO. Round 3 remediation commits `3c38f78` through `805a8f8`
+fixed 20 of 36 findings. See `../docs/audit/round3/remediation_plan.md` for
+the 5-batch TDD plan.
+
+**Round 4** (47 issues + 19 positive verifications at HEAD `805a8f8`):
+1 BLOCKING (TRA-C4-013, doc defect fixed in commit `f226582`), 11 WARNING,
+35 INFO. All 4 critical invariants hold. TRA-013 byte-reproducibility holds
+(audit_trace.jsonl sha256 `263b901e...`, matches R3 exactly). 3 OWASP
+security fixes (TRA-076/077/078) verified holding. See
+`../docs/audit/round4/TRA_audit_findings_register_r4.xlsx` for the full
+register and `../docs/audit/round4/remediation_plan_r4.md` for the
+5-batch TDD remediation plan.
+
+**Remaining persistent findings** (not yet fixed): TRA-001 (partial, full
+per-leaf segment translation), TRA-038 (partial, exception classes routable
+but never raised in production), TRA-040 (EXCEPTION_HANDLER/HALT_ERROR not
+KernelStates — intentional design decision pending spec change), TRA-042
+(structural verification heading-count-only), TRA-072 (PolicyResolver
+universal arbitration), TRA-079 (cache HMAC integrity), TRA-099 (CLI
+--registry flag), TRA-100 (module authoring guide). Plus test-coverage
+gaps (TRA-052/055/056/057/058/090/091/092/094/095) and doc staleness
+residuals (TRA-061/064/065/066/067). See
+`../docs/audit/round4/master_findings_register_r4.json` for the full
+machine-readable register.
 
 ### Audit artifacts
 
@@ -330,6 +350,14 @@ for the full machine-readable register.
   `TRA_audit_findings_register_r2.xlsx`, `TRA_audit_severity_heatmap_r2.png`,
   `master_findings_register.json`, per-track findings (`track_{r,a,b,c,d,e}_findings.md`),
   `audit_worklog_r2.md`
+- **Round 3**: `../docs/audit/round3/` — `TRA_Prototype_Audit_Report_r3.docx`,
+  `TRA_audit_findings_register_r3.xlsx`, `TRA_audit_severity_heatmap_r3.png`,
+  `master_findings_register_r3.json`, `remediation_plan.md`, per-track findings
+  (`track_{a3,b3,c3,d3,e3,f3,r3}_*.md`)
+- **Round 4**: `../docs/audit/round4/` — `TRA_Prototype_Audit_Report_r4.docx`,
+  `TRA_audit_findings_register_r4.xlsx`, `TRA_audit_severity_heatmap_r4.png`,
+  `master_findings_register_r4.json`, `remediation_plan_r4.md`, per-track findings
+  (`track_{a4,b4,c4,d4,e4,f4,r4}_*.md`)
 
 ---
 

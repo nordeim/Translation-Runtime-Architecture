@@ -16,10 +16,10 @@ Phase 0: Foundation & Architecture (Day 1)
 ### 0.1 Project Setup 
  
 - [x] 0.1.1 Initialize tra-prototype/ repo with pyproject.toml, requirements.txt, virtualenv 
-- [x] 0.1.2 Configure linting (ruff), formatting (black), type checking (mypy strict), testing (pytest) 
+- [x] 0.1.2 Configure linting (ruff), formatting (ruff format), type checking (mypy strict), testing (pytest)  *(note: black was removed in Round 3 remediation commit `a3cd2c1`; ruff format handles formatting)*
 - [x] 0.1.3 Create directory structure per prototype.md 
 - [x] 0.1.4 Add config.yaml schema for tvm_bootstrap (language_pair, domain, conformance_level, model_endpoint, model_version) 
-- [x] 0.1.5 Set up CLI entry point skeleton (tra_cli.py with translate, cache-clear, audit subcommands) 
+- [x] 0.1.5 Set up CLI entry point skeleton (tra_cli.py with translate, validate, audit, cache-clear subcommands) 
  
 ### 0.2 Core Data Models (Pydantic v2) — Critical Path 
  
@@ -319,30 +319,40 @@ File Structure Summary
   │   ├── diagnostics.py          # Diagnostic, EvidenceRegistry, AuditRecord 
   │   ├── cache.py                # CacheKeyGenerator, TranslationCache 
   │   ├── anchor.py               # AnchorRegistry, StructuralMapBuilder 
+  │   ├── config.py               # BootstrapConfig (tvm_bootstrap) 
+  │   ├── exceptions.py           # TRAException subclasses 
+  │   ├── recovery.py             # TRA-EXCEPTIONS recovery procedures (Spec §6) 
+  │   ├── hitl.py                 # Human-in-the-loop review hooks 
+  │   ├── reporting.py            # Audit summary, Mermaid state diagram, L4 trace 
+  │   ├── validate.py             # Standalone L3/L4 pass-gate verifier 
+  │   ├── benchmark.py            # Benchmark runner (S/F/T/D/E/R cases) 
   │   ├── modules/ 
   │   │   ├── __init__.py 
-  │   │   ├── registry.py         # ModuleRegistry 
+  │   │   ├── registry.py         # ModuleRegistry, ModuleInterface 
   │   │   ├── zh_en.py            # ZH-EN Language Module 
-  │   │   └── base.py             # Module base class 
-  │   ├── utils.py                # Markdown parsing, entity extraction, slugify 
-  │   └── exceptions.py           # TRAException subclasses 
+  │   │   └── base.py             # Module base class + LanguageModuleProtocol 
+  │   └── utils.py                # Markdown parsing, entity extraction, slugify, sanitize_input 
   ├── examples/ 
   │   ├── security_advisory_zh.md 
   │   └── expected_outputs/ 
   ├── tests/ 
   │   ├── conftest.py 
-  │   ├── test_isa.py 
-  │   ├── test_kernel.py 
   │   ├── test_anchor.py 
   │   ├── test_benchmark.py 
+  │   ├── test_e2e_to_translate.py   # E2E on to_translate.md (12 tests) 
+  │   ├── test_isa.py 
+  │   ├── test_kernel.py 
   │   ├── test_modules.py 
+  │   ├── test_outstanding_findings.py   # TDD regression tests (34 classes, 139 tests) 
   │   ├── test_phase0.py 
   │   ├── test_phase6_hardening.py 
   │   ├── test_recovery.py 
   │   ├── test_reporting.py 
+  │   ├── test_tra043_protocol.py        # LanguageModuleProtocol type-safety 
+  │   ├── test_tra047_config_robustness.py # BootstrapConfig from_yaml / extra=forbid 
+  │   ├── test_tra071_broken_markdown.py  # Unclosed-fence structural validation 
   │   ├── test_utils.py 
   │   ├── test_validate.py 
-  │   ├── test_outstanding_findings.py 
   │   └── benchmark/ 
   │       └── cases/              # S/F/T/D/E + R test fixtures (JSONL) 
   ├── compilation_artifacts/      # Generated at runtime 
@@ -354,38 +364,33 @@ File Structure Summary
  
 Dependencies 
  
+> **Updated at HEAD `805a8f8`** (Round 4 audit). The 6 unused dependencies
+> (`litellm`, `structlog`, `pydantic-settings`, `mdit-py-plugins`, `black`,
+> `pytest-asyncio`) were removed from `pyproject.toml` in Round 3 remediation
+> commit `a3cd2c1` (TRA-017 fixed). The LLM seam is caller-supplied (never
+> imports litellm) and tests are synchronous. Install footprint dropped from
+> ~70 packages to ~15.
+
 ┌───────────────────┬───────────────────────────────────┬─────────┐ 
 │ Package           │ Purpose                           │ Version │ 
 ├───────────────────┼───────────────────────────────────┼─────────┤ 
 │ pydantic          │ Data models, validation           │ ^2.8    │ 
 ├───────────────────┼───────────────────────────────────┼─────────┤ 
-│ pydantic-settings │ Config loading                    │ ^2.3    │ 
-├───────────────────┼───────────────────────────────────┼─────────┤ 
 │ markdown-it-py    │ Markdown AST parsing              │ ^3.0    │ 
-├───────────────────┼───────────────────────────────────┼─────────┤ 
-│ mdit_py_plugins   │ Extended syntax (footnotes, etc.) │ ^0.4    │ 
 ├───────────────────┼───────────────────────────────────┼─────────┤ 
 │ diskcache         │ Deterministic cache backend       │ ^5.6    │ 
 ├───────────────────┼───────────────────────────────────┼─────────┤ 
-│ litellm           │ Unified LLM interface             │ ^1.49   │ 
-├───────────────────┼───────────────────────────────────┼─────────┤ 
 │ pyyaml            │ Artifact serialization            │ ^6.0    │ 
-├───────────────────┼───────────────────────────────────┼─────────┤ 
-│ structlog         │ Structured logging                │ ^24.1   │ 
 ├───────────────────┼───────────────────────────────────┼─────────┤ 
 │ click             │ CLI framework                     │ ^8.1    │ 
 ├───────────────────┼───────────────────────────────────┼─────────┤ 
 │ rich              │ Terminal output                   │ ^13.7   │ 
 ├───────────────────┼───────────────────────────────────┼─────────┤ 
-│ pytest            │ Testing                           │ ^8.2    │ 
+│ pytest            │ Testing (dev extra)               │ ^8.2    │ 
 ├───────────────────┼───────────────────────────────────┼─────────┤ 
-│ pytest-asyncio    │ Async test support                │ ^0.23   │ 
+│ ruff              │ Linting + formatting (dev extra)  │ ^0.5    │ 
 ├───────────────────┼───────────────────────────────────┼─────────┤ 
-│ ruff              │ Linting                           │ ^0.5    │ 
-├───────────────────┼───────────────────────────────────┼─────────┤ 
-│ black             │ Formatting                        │ ^24.4   │ 
-├───────────────────┼───────────────────────────────────┼─────────┤ 
-│ mypy              │ Type checking                     │ ^1.10   │ 
+│ mypy              │ Type checking (dev extra)         │ ^1.10   │ 
 └───────────────────┴───────────────────────────────────┴─────────┘ 
  
 ---
