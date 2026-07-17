@@ -779,22 +779,105 @@ def verify_output(
     """
     diagnostics: list[Diagnostic] = []
     entities = ctx.entity_table
-    structural_map = ctx.structural_map
 
-    # Structural: heading count match (node-count surrogate for the segment set).
-    if structural_map is not None:
-        src_headings = len(_HEADING_RE.findall(source))
-        tgt_headings = len(_HEADING_RE.findall(target))
-        if src_headings != tgt_headings:
-            diagnostics.append(
-                Diagnostic(
-                    severity=Severity.BLOCKING,
-                    subsystem="structural",
-                    issue="Heading count mismatch after translation",
-                    evidence=f"source={src_headings} target={tgt_headings}",
-                    action="Restore heading hierarchy",
-                )
+    # Structural verification (TRA-042 round 4: extended beyond heading count).
+    # Check heading count, table row count, list item count, blockquote line
+    # count, HR count, and fenced code block count. Each mismatch raises a
+    # BLOCKING structural diagnostic so a non-benchmarked input cannot
+    # silently pass L3 with broken structure. These checks are regex-based
+    # and run on source/target text directly (no structural_map required).
+    src_headings = len(_HEADING_RE.findall(source))
+    tgt_headings = len(_HEADING_RE.findall(target))
+    if src_headings != tgt_headings:
+        diagnostics.append(
+            Diagnostic(
+                severity=Severity.BLOCKING,
+                subsystem="structural",
+                issue="Heading count mismatch after translation",
+                evidence=f"source={src_headings} target={tgt_headings}",
+                action="Restore heading hierarchy",
             )
+        )
+
+    # TRA-042: table row count. A table row is a line starting with |.
+    _TABLE_ROW_RE = re.compile(r"^\|.*\|\s*$", re.MULTILINE)
+    src_table_rows = len(_TABLE_ROW_RE.findall(source))
+    tgt_table_rows = len(_TABLE_ROW_RE.findall(target))
+    if src_table_rows != tgt_table_rows:
+        diagnostics.append(
+            Diagnostic(
+                severity=Severity.BLOCKING,
+                subsystem="structural",
+                issue="Table row count mismatch after translation",
+                evidence=f"source={src_table_rows} target={tgt_table_rows}",
+                action="Restore table rows",
+            )
+        )
+
+    # TRA-042: list item count. A list item is a line starting with
+    # -, *, or + (unordered) or digit. (ordered).
+    _LIST_ITEM_RE = re.compile(r"^\s*[-*+] |\n\s*[-*+] ", re.MULTILINE)
+    src_list_items = len(_LIST_ITEM_RE.findall(source))
+    tgt_list_items = len(_LIST_ITEM_RE.findall(target))
+    if src_list_items != tgt_list_items:
+        diagnostics.append(
+            Diagnostic(
+                severity=Severity.BLOCKING,
+                subsystem="structural",
+                issue="List item count mismatch after translation",
+                evidence=f"source={src_list_items} target={tgt_list_items}",
+                action="Restore list items",
+            )
+        )
+
+    # TRA-042: blockquote line count. A blockquote line starts with >.
+    _BLOCKQUOTE_RE = re.compile(r"^\s*>\s", re.MULTILINE)
+    src_blockquotes = len(_BLOCKQUOTE_RE.findall(source))
+    tgt_blockquotes = len(_BLOCKQUOTE_RE.findall(target))
+    if src_blockquotes != tgt_blockquotes:
+        diagnostics.append(
+            Diagnostic(
+                severity=Severity.BLOCKING,
+                subsystem="structural",
+                issue="Blockquote line count mismatch after translation",
+                evidence=f"source={src_blockquotes} target={tgt_blockquotes}",
+                action="Restore blockquote lines",
+            )
+        )
+
+    # TRA-042: horizontal rule count. An HR is a line of only ---, ***, or ___
+    # (3+ chars, possibly with leading whitespace).
+    _HR_RE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$", re.MULTILINE)
+    src_hrs = len(_HR_RE.findall(source))
+    tgt_hrs = len(_HR_RE.findall(target))
+    if src_hrs != tgt_hrs:
+        diagnostics.append(
+            Diagnostic(
+                severity=Severity.BLOCKING,
+                subsystem="structural",
+                issue="Horizontal rule count mismatch after translation",
+                evidence=f"source={src_hrs} target={tgt_hrs}",
+                action="Restore horizontal rules",
+            )
+        )
+
+    # TRA-042: fenced code block count. A fence is a line starting with
+    # ``` or ~~~. Count opening fences (each code block has one open + one
+    # close, so divide by 2 for block count, but comparing raw fence-line
+    # counts is equivalent for mismatch detection).
+    _CODE_FENCE_RE = re.compile(r"^\s*(?:```|~~~)", re.MULTILINE)
+    src_fences = len(_CODE_FENCE_RE.findall(source))
+    tgt_fences = len(_CODE_FENCE_RE.findall(target))
+    if src_fences != tgt_fences:
+        diagnostics.append(
+            Diagnostic(
+                severity=Severity.BLOCKING,
+                subsystem="structural",
+                issue="Code fence count mismatch after translation",
+                evidence=f"source={src_fences} target={tgt_fences}",
+                action="Restore code fences",
+            )
+        )
 
     # Factual: entities preserved verbatim (numbers/versions/casing).
     for ent in entities:

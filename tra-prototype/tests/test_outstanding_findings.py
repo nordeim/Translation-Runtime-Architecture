@@ -3131,3 +3131,274 @@ class TestTRA038EntityAmbiguityRaisedInBuildEntityTable:
         # Should NOT raise.
         table = build_entity_table(source, smap, ctx, evidence, audit)
         assert any(e.name == "RustVMM" for e in table)
+
+
+# =========================================================================
+# TRA-042 (round 4 remediation) — Extend structural verification beyond
+# heading-count-only. verify_output must check table row/col count, list
+# item count, blockquote preservation, HR preservation, and code fence
+# count — not just heading count.
+# =========================================================================
+
+
+class TestTRA042ExtendedStructuralVerification:
+    """TRA-042 (round 4 remediation): verify_output's structural check
+    must validate more than just heading count. The NodeKind enum already
+    carries rich structural info (TABLE, TABLE_ROW, TABLE_CELL, LIST,
+    LIST_ITEM, BLOCKQUOTE, HR, CODE_BLOCK) but verify_output was ignoring
+    all of it.
+
+    Fix: verify_output now counts structural nodes by kind in both source
+    and target, and raises a BLOCKING diagnostic per mismatch.
+    """
+
+    def test_table_row_count_mismatch_raises_blocking(self, tmp_path: Path) -> None:
+        """If the target has a different number of table rows than the
+        source, verify_output must raise a BLOCKING structural diagnostic.
+        """
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import verify_output
+        from tra.memory import ConformanceLevel, RuntimeContext
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        source = "| Col1 | Col2 |\n|------|------|\n| a | b |\n| c | d |\n"
+        # Target has only 1 data row (source has 2) — mismatch.
+        target = "| Col1 | Col2 |\n|------|------|\n| a | b |\n"
+        diags = verify_output(target, source, ctx, audit)
+        structural_diags = [d for d in diags if d.subsystem == "structural"]
+        assert any(
+            "table" in d.issue.lower() or "row" in d.issue.lower()
+            for d in structural_diags
+        ), (
+            f"Expected structural diagnostic for table row mismatch, got: "
+            f"{structural_diags}"
+        )
+
+    def test_list_item_count_mismatch_raises_blocking(self, tmp_path: Path) -> None:
+        """If the target has a different number of list items than the
+        source, verify_output must raise a BLOCKING structural diagnostic.
+        """
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import verify_output
+        from tra.memory import ConformanceLevel, RuntimeContext
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        source = "- item 1\n- item 2\n- item 3\n"
+        # Target has only 2 items (source has 3) — mismatch.
+        target = "- item 1\n- item 2\n"
+        diags = verify_output(target, source, ctx, audit)
+        structural_diags = [d for d in diags if d.subsystem == "structural"]
+        assert any(
+            "list" in d.issue.lower() or "item" in d.issue.lower()
+            for d in structural_diags
+        ), (
+            f"Expected structural diagnostic for list item mismatch, got: "
+            f"{structural_diags}"
+        )
+
+    def test_blockquote_count_mismatch_raises_blocking(self, tmp_path: Path) -> None:
+        """If the target has a different number of blockquote lines than
+        the source, verify_output must raise a BLOCKING structural diagnostic.
+        """
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import verify_output
+        from tra.memory import ConformanceLevel, RuntimeContext
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        source = "> quote line 1\n> quote line 2\n"
+        # Target dropped one blockquote line — mismatch.
+        target = "> quote line 1\n"
+        diags = verify_output(target, source, ctx, audit)
+        structural_diags = [d for d in diags if d.subsystem == "structural"]
+        assert any(
+            "blockquote" in d.issue.lower() or "quote" in d.issue.lower()
+            for d in structural_diags
+        ), (
+            f"Expected structural diagnostic for blockquote mismatch, got: "
+            f"{structural_diags}"
+        )
+
+    def test_hr_count_mismatch_raises_blocking(self, tmp_path: Path) -> None:
+        """If the target has a different number of horizontal rules than
+        the source, verify_output must raise a BLOCKING structural diagnostic.
+        """
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import verify_output
+        from tra.memory import ConformanceLevel, RuntimeContext
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        source = "Section A\n\n---\n\nSection B\n\n---\n\nSection C\n"
+        # Target has only 1 HR (source has 2) — mismatch.
+        target = "Section A\n\n---\n\nSection B\n\nSection C\n"
+        diags = verify_output(target, source, ctx, audit)
+        structural_diags = [d for d in diags if d.subsystem == "structural"]
+        assert any(
+            "hr" in d.issue.lower() or "rule" in d.issue.lower()
+            for d in structural_diags
+        ), f"Expected structural diagnostic for HR mismatch, got: {structural_diags}"
+
+    def test_code_fence_count_mismatch_raises_blocking(self, tmp_path: Path) -> None:
+        """If the target has a different number of fenced code blocks than
+        the source, verify_output must raise a BLOCKING structural diagnostic.
+        """
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import verify_output
+        from tra.memory import ConformanceLevel, RuntimeContext
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        source = "```\ncode 1\n```\n\ntext\n\n```\ncode 2\n```\n"
+        # Target has only 1 code block (source has 2) — mismatch.
+        target = "```\ncode 1\n```\n\ntext\n"
+        diags = verify_output(target, source, ctx, audit)
+        structural_diags = [d for d in diags if d.subsystem == "structural"]
+        assert any(
+            "code" in d.issue.lower() or "fence" in d.issue.lower()
+            for d in structural_diags
+        ), (
+            f"Expected structural diagnostic for code fence mismatch, got: "
+            f"{structural_diags}"
+        )
+
+    def test_matching_structure_no_structural_diagnostic(self, tmp_path: Path) -> None:
+        """When source and target have matching structure, verify_output
+        must NOT raise any structural diagnostics."""
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import verify_output
+        from tra.memory import ConformanceLevel, RuntimeContext
+        from tra.modules.zh_en import ZHENModule
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        module = ZHENModule()
+        ctx = RuntimeContext(
+            configuration=cfg.model_dump(),
+            style_profile=module.get_style_profile(),
+            module=module,
+        )
+        EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        # Source and target are identical — no structural mismatch.
+        source = "# Heading\n\n- item 1\n- item 2\n\n> quote\n\n---\n"
+        target = "# Heading\n\n- item 1\n- item 2\n\n> quote\n\n---\n"
+        diags = verify_output(target, source, ctx, audit)
+        structural_diags = [d for d in diags if d.subsystem == "structural"]
+        assert not structural_diags, (
+            f"Expected no structural diagnostics for matching structure, got: "
+            f"{structural_diags}"
+        )
