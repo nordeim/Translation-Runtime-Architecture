@@ -649,9 +649,13 @@ def repair_segment(
             repaired = repaired.replace(src, glossary[src])
 
     elif diagnostic.subsystem == "entity":
-        name = diagnostic.issue.split("'")[1] if "'" in diagnostic.issue else ""
-        if name and name not in repaired:
-            repaired = repaired  # cannot conjure absent entity without source
+        # TRA-A4-011 (round 4): removed dead `repaired = repaired` no-op.
+        # If an entity is missing from the output, we cannot conjure it
+        # without the source segment context (not available here). Downstream
+        # verify_output catches missing entities as BLOCKING, so this is
+        # defense-in-depth. The prior `repaired = repaired` self-assignment
+        # was misleading — it suggested action where none existed.
+        pass
 
     elif diagnostic.subsystem == "epistemic":
         # Revert to canonical marker.

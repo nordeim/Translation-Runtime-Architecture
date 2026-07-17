@@ -53,6 +53,11 @@ class ModuleRegistry:
         LanguageModuleProtocol at registration time so errors surface with
         an actionable message, not as an opaque AttributeError later.
         TRA-098: detect duplicate names and conflicting directions.
+        TRA-F4-006 (round 4): validate that get_style_profile() returns a
+        non-None value (or a dict that can be coerced to StyleProfile) so
+        that a minimal ModuleInterface with default lambdas is rejected
+        here with a clear error, rather than crashing TRAKernel construction
+        later with an opaque Pydantic ValidationError.
         """
         from .base import LanguageModuleProtocol
 
@@ -71,6 +76,25 @@ class ModuleRegistry:
             raise TypeError(
                 f"Module '{mod_name}' does not satisfy "
                 f"LanguageModuleProtocol. Missing methods: {missing}"
+            )
+        # TRA-F4-006: validate get_style_profile() return shape. A minimal
+        # ModuleInterface with the default `lambda: None` would crash
+        # RuntimeContext.style_profile validation (a typed Pydantic field).
+        # Surface the error here with an actionable message.
+        try:
+            style_profile = module.get_style_profile()
+        except Exception as e:
+            raise TypeError(
+                f"Module '{module.name}'.get_style_profile() raised {e!r}. "
+                f"The callable must return a StyleProfile instance or a dict."
+            ) from e
+        if style_profile is None:
+            raise TypeError(
+                f"Module '{module.name}'.get_style_profile() returned None. "
+                f"RuntimeContext.style_profile is a typed Pydantic field that "
+                f"rejects None. Supply a get_style_profile callable that returns "
+                f"a StyleProfile instance (see tra.modules.zh_en.ZHENModule "
+                f"for the template)."
             )
         # TRA-098: detect duplicate name.
         if module.name in self._modules:

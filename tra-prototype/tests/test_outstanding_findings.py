@@ -1753,13 +1753,25 @@ class TestTRA097RegisterProtocolCheck:
             )
 
     def test_valid_module_accepted(self) -> None:
-        """A module satisfying the protocol must be accepted."""
+        """A module satisfying the protocol must be accepted.
+
+        Note (TRA-F4-006 round 4): must supply a real get_style_profile
+        callable (returning a non-None StyleProfile-compatible dict) because
+        register() now validates the return shape — minimal ModuleInterface
+        objects with default lambdas are rejected with a clear TypeError.
+        """
         from tra.modules.registry import ModuleInterface, ModuleRegistry
 
         iface = ModuleInterface(
             name="test",
             kind="language",
             metadata={"direction": "ZH -> EN"},
+            get_style_profile=lambda: {
+                "voice": "technical",
+                "sentence_complexity": "moderate",
+                "epistemic_mapping": {},
+                "punctuation_rules": {},
+            },
         )
         registry = ModuleRegistry()
         registry.register(iface)
@@ -1861,7 +1873,22 @@ class TestTRA073DeadCodeRemoved:
 class TestTRA098RegistryDuplicateDetection:
     """TRA-098 (round 3): ModuleRegistry must detect duplicate module names
     and conflicting directions, rather than silently overwriting.
+
+    Note (TRA-F4-006 round 4): the test modules now supply a real
+    `get_style_profile` callable (returning a StyleProfile) because
+    register() validates the return shape — minimal ModuleInterface objects
+    with default lambdas are now rejected with a clear TypeError.
     """
+
+    @staticmethod
+    def _valid_style_profile() -> dict[str, str]:
+        # Minimal valid StyleProfile dict (satisfies RuntimeContext validation).
+        return {
+            "voice": "technical",
+            "sentence_complexity": "moderate",
+            "epistemic_mapping": {},
+            "punctuation_rules": {},
+        }
 
     def test_duplicate_name_raises(self) -> None:
         """Registering two modules with the same name must raise ValueError."""
@@ -1869,10 +1896,16 @@ class TestTRA098RegistryDuplicateDetection:
 
         registry = ModuleRegistry()
         mod1 = ModuleInterface(
-            name="zh_en", kind="language", metadata={"direction": "ZH -> EN"}
+            name="zh_en",
+            kind="language",
+            metadata={"direction": "ZH -> EN"},
+            get_style_profile=self._valid_style_profile,
         )
         mod2 = ModuleInterface(
-            name="zh_en", kind="language", metadata={"direction": "ZH -> EN"}
+            name="zh_en",
+            kind="language",
+            metadata={"direction": "ZH -> EN"},
+            get_style_profile=self._valid_style_profile,
         )
         registry.register(mod1)
         try:
@@ -1888,10 +1921,16 @@ class TestTRA098RegistryDuplicateDetection:
 
         registry = ModuleRegistry()
         mod1 = ModuleInterface(
-            name="zh_en_v1", kind="language", metadata={"direction": "ZH -> EN"}
+            name="zh_en_v1",
+            kind="language",
+            metadata={"direction": "ZH -> EN"},
+            get_style_profile=self._valid_style_profile,
         )
         mod2 = ModuleInterface(
-            name="zh_en_v2", kind="language", metadata={"direction": "ZH -> EN"}
+            name="zh_en_v2",
+            kind="language",
+            metadata={"direction": "ZH -> EN"},
+            get_style_profile=self._valid_style_profile,
         )
         registry.register(mod1)
         try:
@@ -1910,7 +1949,10 @@ class TestTRA098RegistryDuplicateDetection:
 
         registry = ModuleRegistry()
         mod = ModuleInterface(
-            name="test_mod", kind="language", metadata={"direction": "FR -> EN"}
+            name="test_mod",
+            kind="language",
+            metadata={"direction": "FR -> EN"},
+            get_style_profile=self._valid_style_profile,
         )
         registry.register(mod)
         assert registry.get("test_mod") is mod
@@ -2235,3 +2277,343 @@ class TestTRA089ConformanceFailureE2E:
             assert "BROKEN_LINK" in str(e), (
                 f"ConformanceFailure message unexpected: {e}"
             )
+
+
+# =========================================================================
+# TRA-A4-011 (round 4) — Remove dead `repaired = repaired` no-op
+# =========================================================================
+
+
+class TestTRA_A4_011_RepairedNoopRemoved:
+    """TRA-A4-011 (round 4): the dead `repaired = repaired` no-op
+    self-assignment at isa.py:654 (in repair_segment's entity branch) must
+    be removed. Parallel to TRA-073's `out = out` removal in _rule_translate,
+    but R3's scan was scoped to _rule_translate only and missed this instance.
+
+    The line was a no-op assignment (`repaired = repaired`) that detected
+    the scenario where an entity is MISSING from the output but took no
+    corrective action. Downstream verify_output catches missing entities
+    as BLOCKING, so this is defense-in-depth, not a live bug. But the
+    misleading comment "cannot conjure absent entity without source"
+    suggested action where none existed.
+    """
+
+    def test_no_repaired_self_assignment_in_isa(self) -> None:
+        """Static check: no `repaired = repaired` self-assignment remains
+        in tra/isa.py. Searches for the exact pattern that TRA-A4-011 flagged.
+
+        Note: `repaired = repaired.replace(...)` is a chained method call
+        (NOT a self-assignment) and is excluded by the negative lookahead.
+        """
+        from pathlib import Path
+
+        isa_path = Path(__file__).parent.parent / "tra" / "isa.py"
+        source = isa_path.read_text(encoding="utf-8")
+        import re
+
+        # Match `repaired = repaired` NOT followed by `.` (which would be a
+        # chained method call like `repaired = repaired.replace(...)`).
+        pattern = re.compile(r"^\s*repaired\s*=\s*repaired(?!\.)", re.MULTILINE)
+        matches = pattern.findall(source)
+        assert not matches, (
+            f"Found `repaired = repaired` self-assignment in isa.py — "
+            f"TRA-A4-011 regression. Matches: {matches}"
+        )
+
+    def test_no_out_self_assignment_in_isa(self) -> None:
+        """Static check: no `out = out` self-assignment remains in tra/isa.py.
+        This is the TRA-073 check extended to ALL of isa.py (not just
+        _rule_translate), so any future self-assignment pattern is caught.
+
+        Note: `out = out.replace(...)` is a chained method call (NOT a
+        self-assignment) and is excluded by the negative lookahead.
+        """
+        from pathlib import Path
+
+        isa_path = Path(__file__).parent.parent / "tra" / "isa.py"
+        source = isa_path.read_text(encoding="utf-8")
+        import re
+
+        pattern = re.compile(r"^\s*out\s*=\s*out(?!\.)", re.MULTILINE)
+        matches = pattern.findall(source)
+        assert not matches, (
+            f"Found `out = out` self-assignment in isa.py — "
+            f"TRA-073 regression. Matches: {matches}"
+        )
+
+
+# =========================================================================
+# TRA-B4-009 / TRA-D4-013 (round 4) — Regression tests for silently-fixed
+# findings (TRA-016 count_blocking stub, TRA-017 unused deps, TRA-026
+# cache.expire config). These were remediated without dedicated regression
+# tests, so a future re-introduction would not be caught.
+# =========================================================================
+
+
+class TestTRA016CountBlockingGone:
+    """TRA-016 (fixed in Round 2): AuditTrail must NOT have a `count_blocking`
+    stub method. R2 found a dead stub; it was removed. This test catches
+    re-introduction.
+    """
+
+    def test_audit_trail_has_no_count_blocking_attribute(self) -> None:
+        from tra.diagnostics import AuditTrail
+
+        assert not hasattr(AuditTrail, "count_blocking"), (
+            "AuditTrail.count_blocking re-introduced — TRA-016 regression. "
+            "The method was a dead stub that returned 0; it was removed in "
+            "Round 2 because verify_output already filters by severity."
+        )
+
+
+class TestTRA017UnusedDepsGone:
+    """TRA-017 (fixed in Round 3 remediation commit a3cd2c1): the 6 unused
+    dependencies (litellm, structlog, pydantic-settings, mdit-py-plugins,
+    black, pytest-asyncio) must NOT be in pyproject.toml's [project]
+    dependencies or [project.optional-dependencies] dev.
+    """
+
+    def test_unused_deps_not_in_pyproject(self) -> None:
+        from pathlib import Path
+
+        # Use tomllib (stdlib in 3.11+) to parse pyproject.toml
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
+        pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
+        with pyproject_path.open("rb") as f:
+            data = tomllib.load(f)
+
+        # Collect all declared deps (runtime + dev extras)
+        runtime_deps = data.get("project", {}).get("dependencies", [])
+        dev_deps = (
+            data.get("project", {}).get("optional-dependencies", {}).get("dev", [])
+        )
+        all_deps = [d.lower() for d in runtime_deps + dev_deps]
+
+        forbidden = [
+            "litellm",
+            "structlog",
+            "pydantic-settings",
+            "mdit-py-plugins",
+            "mdit_py_plugins",
+            "pytest-asyncio",
+            "pytest_asyncio",
+            "black",
+        ]
+        for pkg in forbidden:
+            # Match either exact name or name with version specifier
+            matches = [
+                d
+                for d in all_deps
+                if d.split(">")[0].split("<")[0].split("=")[0].split("!")[0].strip()
+                == pkg
+            ]
+            assert not matches, (
+                f"Forbidden dep `{pkg}` re-added to pyproject.toml — "
+                f"TRA-017 regression. Matching entries: {matches}"
+            )
+
+
+class TestTRA026CacheExpireGone:
+    """TRA-026 (fixed in Round 2): BootstrapConfig must NOT have a
+    `cache_expire` field. R2 found a dead config field; it was removed.
+    This test catches re-introduction.
+    """
+
+    def test_bootstrap_config_has_no_cache_expire_field(self) -> None:
+        from tra.config import BootstrapConfig
+
+        fields = BootstrapConfig.model_fields
+        assert "cache_expire" not in fields, (
+            "BootstrapConfig.cache_expire re-introduced — TRA-026 regression. "
+            "The field was dead config (diskcache has no TTL by design); "
+            "it was removed in Round 2."
+        )
+
+
+# =========================================================================
+# TRA-F4-006 (round 4) — Minimal ModuleInterface (defaults only) crashes
+# TRAKernel construction because get_style_profile() returns None.
+# =========================================================================
+
+
+class TestTRA_F4_006_MinimalModuleInterfaceCrashes:
+    """TRA-F4-006 (round 4): constructing `ModuleInterface(name="x",
+    kind="language")` with no callable overrides passes register() (the
+    lambda defaults satisfy LanguageModuleProtocol structurally) but then
+    TRAKernel.__init__ calls `module.get_style_profile()` which returns None,
+    and RuntimeContext.style_profile is a typed Pydantic field that rejects
+    None.
+
+    The fix: validate the return shape in register() so the error surfaces
+    at registration time with an actionable message, not as an opaque
+    ValidationError later.
+    """
+
+    def test_minimal_module_interface_register_raises(self) -> None:
+        """A ModuleInterface with default lambdas must NOT be registerable
+        if its get_style_profile() returns None (which would crash
+        TRAKernel construction later with an opaque Pydantic ValidationError).
+
+        TRA-F4-006 fix: register() must validate the return shape and raise
+        a CLEAR TypeError/ValueError mentioning 'style_profile' — NOT a
+        Pydantic ValidationError from RuntimeContext construction.
+        """
+        from tra.modules.registry import ModuleInterface, ModuleRegistry
+
+        # Construct a minimal ModuleInterface with default lambdas.
+        # get_style_profile defaults to `lambda: None` which would crash
+        # RuntimeContext.style_profile validation.
+        minimal = ModuleInterface(
+            name="minimal-broken",
+            kind="language",
+            metadata={"direction": "ZH -> EN"},
+        )
+
+        registry = ModuleRegistry()
+        # TRA-F4-006 fix: register() should reject this with a clear,
+        # actionable error message — NOT let it through to crash TRAKernel
+        # with an opaque Pydantic ValidationError later.
+        raised: Exception | None = None
+        try:
+            registry.register(minimal)
+        except TypeError as e:
+            raised = e
+        except ValueError as e:
+            # Pydantic ValidationError is a ValueError subclass — but we want
+            # a CLEAR error from register(), not an opaque ValidationError.
+            # If register() raised a plain ValueError with a clear message,
+            # that's acceptable. If it's a ValidationError, that's a regression.
+            from pydantic import ValidationError
+
+            if isinstance(e, ValidationError):
+                raise AssertionError(
+                    f"TRA-F4-006 regression: register() let through a Pydantic "
+                    f"ValidationError instead of catching it with a clear "
+                    f"TypeError. Error: {e}"
+                ) from e
+            raised = e
+
+        assert raised is not None, (
+            "TRA-F4-006 regression: register() accepted a minimal "
+            "ModuleInterface whose get_style_profile() returns None. "
+            "This would crash TRAKernel construction with an opaque "
+            "Pydantic ValidationError."
+        )
+        # The error message must mention style_profile so the user knows
+        # what to fix.
+        assert (
+            "style_profile" in str(raised).lower()
+            or "get_style_profile" in str(raised).lower()
+        ), f"Register error message should mention style_profile, got: {raised}"
+
+
+# =========================================================================
+# TRA-F4-007 (round 4) — _select_module silent dispatch on same-source-lang
+# collisions. If two modules are registered with `fr -> en` and `fr -> de`,
+# the second is silently unreachable because _select_module filters by
+# source language only, not by full direction.
+# =========================================================================
+
+
+class TestTRA_F4_007_SelectModuleFullDirectionMatch:
+    """TRA-F4-007 (round 4): TRAKernel._select_module must match the FULL
+    direction (e.g. 'fr -> en'), not just the source language (e.g. 'fr').
+
+    Root cause: kernel.py:_select_module filters by `mod_source == source_lang`
+    where source_lang is the part before '->'. If two modules are registered
+    with `fr -> en` and `fr -> de`, the first match (by source) wins and the
+    second is silently unreachable. The user's `--lang fr-de` would silently
+    use the `fr -> en` module.
+
+    Fix: prefer a full-direction match; fall back to source-only match only
+    if no exact direction match exists.
+    """
+
+    @staticmethod
+    def _make_module(name: str, direction: str) -> object:
+        """Build a minimal ModuleInterface with a real get_style_profile."""
+        from tra.modules.registry import ModuleInterface
+
+        return ModuleInterface(
+            name=name,
+            kind="language",
+            metadata={"direction": direction},
+            get_style_profile=lambda: {
+                "voice": "technical",
+                "sentence_complexity": "moderate",
+                "epistemic_mapping": {},
+                "punctuation_rules": {},
+            },
+        )
+
+    def test_full_direction_match_preferred_over_source_only(self) -> None:
+        """When two modules share a source language but differ in target,
+        _select_module must pick the one matching the FULL direction.
+        """
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+        from tra.modules.registry import ModuleRegistry
+
+        registry = ModuleRegistry()
+        fr_en = self._make_module("fr_en", "FR -> EN")
+        fr_de = self._make_module("fr_de", "FR -> DE")
+        registry.register(fr_en)
+        registry.register(fr_de)
+
+        cfg = BootstrapConfig(
+            language_pair="FR -> DE",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir="/tmp",
+            cache_directory="/tmp/cache",
+            compilation_dir="/tmp/art",
+            audit_trace="/tmp/audit.jsonl",
+        )
+        kernel = TRAKernel(cfg, registry=registry)
+        # The selected module must be fr_de (full direction match), not
+        # fr_en (which only matches by source language).
+        selected = kernel.ctx.module
+        assert getattr(selected, "name", "") == "fr_de", (
+            f"Expected fr_de (full direction match FR -> DE), got "
+            f"{getattr(selected, 'name', '?')}. TRA-F4-007 regression: "
+            f"_select_module is matching by source language only."
+        )
+
+    def test_source_only_fallback_when_no_full_match(self) -> None:
+        """If no module matches the full direction, fall back to the first
+        source-language match (backward compat with the old behavior)."""
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+        from tra.modules.registry import ModuleRegistry
+
+        registry = ModuleRegistry()
+        # Only fr -> en is registered; user asks for fr -> de.
+        fr_en = self._make_module("fr_en", "FR -> EN")
+        registry.register(fr_en)
+
+        cfg = BootstrapConfig(
+            language_pair="FR -> DE",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir="/tmp",
+            cache_directory="/tmp/cache",
+            compilation_dir="/tmp/art",
+            audit_trace="/tmp/audit.jsonl",
+        )
+        kernel = TRAKernel(cfg, registry=registry)
+        # No full match; source-only fallback picks fr_en.
+        selected = kernel.ctx.module
+        assert getattr(selected, "name", "") == "fr_en", (
+            f"Expected fr_en (source-only fallback), got "
+            f"{getattr(selected, 'name', '?')}."
+        )

@@ -150,27 +150,43 @@ class TRAKernel:
     def _select_module(language_pair: str, registry: object | None) -> Any:
         """Select the language module for the configured pair (TRA-002).
 
-        If a registry is supplied, filter it by language_pair and return the
-        first matching module. Otherwise fall back to ZHENModule.
+        If a registry is supplied, prefer a FULL direction match (e.g.
+        'fr -> en' matches a module with direction 'FR -> EN'). If no full
+        match exists, fall back to a source-language-only match (e.g. 'fr'
+        matches any module whose source is 'fr'). If neither matches, fall
+        through to ZHENModule.
+
+        TRA-F4-007 (round 4): previously this matched by source language
+        only, so two modules with `fr -> en` and `fr -> de` would silently
+        dispatch the first one for `--lang fr-de`, masking the user's intent.
         """
         if registry is not None:
-            # Filter the PASSED registry (don't rebuild from defaults).
-            source_lang = (
-                language_pair.split("->", 1)[0].strip().lower()
-                if "->" in language_pair
-                else ""
+            # Normalize the requested direction for comparison.
+            req_direction = language_pair.strip().lower()
+            req_source = (
+                req_direction.split("->", 1)[0].strip() if "->" in req_direction else ""
             )
+            # Pass 1: prefer a full-direction match.
+            source_only_match: Any = None
             for mod in registry.all():  # type: ignore[attr-defined]
                 if getattr(mod, "kind", "") != "language":
                     continue
                 mod_direction = str(getattr(mod, "metadata", {}).get("direction", ""))
-                mod_source = (
-                    mod_direction.split("->", 1)[0].strip().lower()
-                    if "->" in mod_direction
-                    else ""
-                )
-                if mod_source == source_lang:
+                mod_direction_norm = mod_direction.strip().lower()
+                if mod_direction_norm and mod_direction_norm == req_direction:
                     return mod
+                # Track the first source-only match as a fallback.
+                if source_only_match is None and req_source:
+                    mod_source = (
+                        mod_direction_norm.split("->", 1)[0].strip()
+                        if "->" in mod_direction_norm
+                        else ""
+                    )
+                    if mod_source == req_source:
+                        source_only_match = mod
+            # Pass 2: no full match — use the source-only fallback if any.
+            if source_only_match is not None:
+                return source_only_match
             # No match in registry; fall through to ZHENModule.
         return ZHENModule()
 
