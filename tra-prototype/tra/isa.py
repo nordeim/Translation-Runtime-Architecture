@@ -17,7 +17,6 @@ import hashlib
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from .anchor import build_structural_map
 from .cache import CacheKeyContext, TranslationCache, TranslationResult
@@ -594,7 +593,7 @@ def _rule_translate(
     segment: str,
     glossary: dict[str, str],
     entities: list[Entity],
-    module: Any = None,
+    module: LanguageModuleProtocol | None = None,
     unresolved_ambiguities: list[str] | None = None,
 ) -> tuple[str, str, list[str]]:
     """Deterministic canonical translation via glossary + entity + epistemic.

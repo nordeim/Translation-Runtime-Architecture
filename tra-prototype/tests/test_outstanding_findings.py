@@ -5170,3 +5170,97 @@ class TestTRA_E5_005_ForceUnrecoverableFlag:
             "TRA-E5-005: --force-unrecoverable + --interactive should trigger "
             f"the HITL review_decision path. CLI output: {result.output}"
         )
+
+
+# ============================================================================
+# Type-safety: anchor_registry: Any -> AnchorRegistry | None (Round 5)
+# ============================================================================
+class TestTypeSafety_AnchorRegistryType:
+    """Type-safety residual: `RuntimeContext.anchor_registry: Any` should
+    be `AnchorRegistry | None`. The AnchorRegistry class exists in
+    `tra/anchor.py` and is used by the kernel for link rewriting.
+    Tightening this lets mypy --strict catch typos in attribute access.
+    """
+
+    def test_anchor_registry_typed_as_anchor_registry_or_none(self) -> None:
+        """RED: anchor_registry field should be typed AnchorRegistry | None,
+        not Any."""
+        import ast
+        from pathlib import Path
+
+        src = Path(
+            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/memory.py"
+        ).read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == "anchor_registry"
+            ):
+                annotation = ast.unparse(node.annotation)
+                assert "AnchorRegistry" in annotation, (
+                    f"anchor_registry should be typed AnchorRegistry | None, "
+                    f"got {annotation}"
+                )
+                assert "Any" not in annotation, (
+                    f"anchor_registry should not be typed Any, got {annotation}"
+                )
+                return
+        raise AssertionError("anchor_registry field not found in memory.py")
+
+    def test_anchor_registry_imported_in_memory_py(self) -> None:
+        """RED: AnchorRegistry must be imported in memory.py."""
+        from pathlib import Path
+
+        src = Path(
+            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/memory.py"
+        ).read_text()
+        assert "AnchorRegistry" in src, (
+            "AnchorRegistry must be imported in memory.py for the type annotation."
+        )
+        # Check it's actually imported (not just referenced in a string)
+        assert "from .anchor import" in src or "import AnchorRegistry" in src, (
+            "AnchorRegistry must be imported via 'from .anchor import AnchorRegistry'"
+        )
+
+
+# ============================================================================
+# Type-safety: _rule_translate module: Any -> LanguageModuleProtocol | None
+# ============================================================================
+class TestTypeSafety_RuleTranslateModuleParam:
+    """Type-safety residual: `_rule_translate(module: Any = None)` should
+    be `module: LanguageModuleProtocol | None = None`. The `module`
+    parameter receives `ctx.module` (which is already typed
+    `LanguageModuleProtocol | None`). Tightening this lets mypy --strict
+    catch typos in method names inside _rule_translate.
+    """
+
+    def test_rule_translate_module_param_typed(self) -> None:
+        """RED: _rule_translate's module parameter should be typed
+        LanguageModuleProtocol | None, not Any."""
+        import ast
+        from pathlib import Path
+
+        src = Path(
+            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/isa.py"
+        ).read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_rule_translate":
+                for arg in node.args.args:
+                    if arg.arg == "module":
+                        annotation = (
+                            ast.unparse(arg.annotation) if arg.annotation else "None"
+                        )
+                        assert "LanguageModuleProtocol" in annotation, (
+                            f"_rule_translate module param should be typed "
+                            f"LanguageModuleProtocol | None, got {annotation}"
+                        )
+                        assert "Any" not in annotation, (
+                            f"_rule_translate module param should not be Any, "
+                            f"got {annotation}"
+                        )
+                        return
+                raise AssertionError("module parameter not found in _rule_translate")
+        raise AssertionError("_rule_translate function not found in isa.py")

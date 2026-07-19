@@ -397,3 +397,13 @@ def build_structural_map(
 ) -> tuple[StructuralMap, AnchorRegistry]:
     """Convenience entry point (replaces the Phase 0 stub)."""
     return StructuralMapBuilder(parser).build(source)
+
+
+# TRA-B5-012 (round 5): RuntimeContext.anchor_registry is typed as
+# `AnchorRegistry | None` (was `Any`). Pydantic needs model_rebuild() to
+# resolve the forward reference because anchor.py and memory.py have a
+# circular import (anchor imports StructuralMap from memory; memory
+# imports AnchorRegistry from anchor under TYPE_CHECKING).
+from .memory import RuntimeContext  # noqa: E402
+
+RuntimeContext.model_rebuild()

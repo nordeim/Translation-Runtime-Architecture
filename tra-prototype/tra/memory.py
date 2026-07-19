@@ -11,7 +11,7 @@ the models but never influences control flow.
 from __future__ import annotations
 
 from enum import Enum, StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,6 +19,13 @@ from pydantic import BaseModel, ConfigDict, Field
 # Pydantic can resolve the forward reference. modules/base.py only imports
 # from typing (no circular dependency on memory.py).
 from .modules.base import LanguageModuleProtocol
+
+if TYPE_CHECKING:
+    # Avoid circular import: anchor.py imports from memory.py at runtime.
+    # AnchorRegistry is only needed for type annotations here; Pydantic
+    # resolves the string annotation "AnchorRegistry | None" via
+    # model_rebuild() called at the bottom of anchor.py.
+    from .anchor import AnchorRegistry
 
 
 class PolicyPriority(int, Enum):
@@ -216,7 +223,7 @@ class RuntimeContext(BaseModel):
     # The AnchorRegistry from ANALYZE_DOCUMENT (TRA-008). Preserved so the
     # kernel can call rewrite_links after translation to repoint internal
     # `[text](#slug)` links at the translated heading slugs (S-06).
-    anchor_registry: Any = Field(default=None, exclude=True)
+    anchor_registry: AnchorRegistry | None = Field(default=None, exclude=True)
 
 
 class RepairAttempt(BaseModel):
