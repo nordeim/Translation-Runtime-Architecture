@@ -25,7 +25,7 @@
 
 项目提供了完整的配套文档：
 
-· 基准测试套件 (TRA-BENCHMARK-SUITE.md)：包含100多个测试用例，覆盖Markdown结构、数值精度、术语一致性等。
+· 基准测试套件 (TRA-BENCHMARK-SUITE.md)：目前包含24个测试用例（spec目标为100+），覆盖Markdown结构、数值精度、术语一致性等。
 · 一致性指南 (TRA-CONFORMANCE-GUIDE.md)：为审核员提供了L3认证的详细检查清单。
 
 💎 总结与展望

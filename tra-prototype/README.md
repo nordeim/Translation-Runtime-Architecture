@@ -87,26 +87,35 @@ mypy --strict tra
   per leaf segment (TRA-001 partial); the kernel passes the full source to
   `translate_segment`. This affects cache granularity,
   `RepairAttempt.segment_index`, and the L4 line-by-line trace.
-- **Module registry** (TRA-002, fixed in kernel; CLI gap persists): the kernel
-  now selects the language module from the registry when supplied
-  (`TRAKernel(cfg, registry=)`); `as_interface()` satisfies
-  `LanguageModuleProtocol` (TRA-096 fixed in Round 3). However,
-  `python -m tra_cli translate` does not yet pass a registry (TRA-099), so the
-  CLI still falls back to `ZHENModule`.
-- **Exception recovery** (TRA-004, partial): `BrokenMarkdown` routes through
-  `_recover`; `build_entity_table` is wrapped in try/except (TRA-039);
-  `route_exception` has an explicit `Unrecoverable` branch returning
-  `BLOCKING + HALT` (TRA-044 fixed in Round 2). However,
-  `UnknownTerm`/`CertaintyConflict`/`EntityAmbiguity` are still never raised
-  in production code paths (TRA-038 partial) — their exception classes,
-  recovery procedures, and routing are operational, but no production code
-  path auto-detects the conditions that would raise them.
-- **Policy Engine** (TRA-006 fixed in Round 3; TRA-072 partial):
-  `PolicyResolver` is now invoked in `verify_output` via
-  `_POLICY_RESOLVER.wins(TERMINOLOGICAL_CONSISTENCY, TARGET_FLUENCY)`.
-  However, this is the ONLY conflict pair arbitrated (TRA-072); all other
-  severity decisions use hard-coded conditionals. Spec §5.2 mandates
-  universal arbitration.
+- **Module registry** (TRA-002, fixed in kernel; TRA-099 FIXED in Round 4
+  Batch 1 commit `e54b7a7`): the kernel selects the language module from the
+  registry when supplied (`TRAKernel(cfg, registry=)`); `as_interface()`
+  satisfies `LanguageModuleProtocol` (TRA-096 fixed in Round 3). The CLI's
+  `translate` command now auto-builds the default registry and passes it to
+  `TRAKernel` (TRA-099 fixed in round 4). The kernel's `_select_module` matches
+  by full direction (TRA-F4-007 fixed in round 4).
+- **Exception recovery** (TRA-004, partial; TRA-038 partial-fixed in round 4
+  commit `d95c36d`): `BrokenMarkdown` routes through `_recover`;
+  `build_entity_table` is wrapped in try/except (TRA-039); `route_exception`
+  has an explicit `Unrecoverable` branch returning `BLOCKING + HALT` (TRA-044
+  fixed in Round 2). All 3 previously-unreachable exception types are now wired
+  in production (TRA-038 fixed in round 4 commit `d95c36d`): `UnknownTerm` is
+  logged via `recover_unknown_term` (non-halting) when a CJK token has no
+  glossary/entity/epistemic match; `CertaintyConflict` is raised in the LLM
+  path when a forbidden drift target is detected; `EntityAmbiguity` is logged
+  when a token matches multiple entity patterns and `entity_type_hint` returns
+  None. Caveat: UnknownTerm/EntityAmbiguity bypass the kernel's `_recover`
+  dispatcher (no EXCEPTION_HANDLER audit record; the L4 ambiguity_register
+  still captures the entries) — TRA-A5-003 partial.
+- **Policy Engine** (TRA-006 fixed in Round 3; TRA-072 partial-fixed in
+  round 4 commit `78c9250`): `PolicyResolver` is now invoked for ALL 4
+  severity decision pairs in `verify_output` (TRA-072 fixed in round 4 commit
+  `78c9250`): Structural (P2) vs Fluency (P6), Entity (P3) vs Fluency (P6),
+  Terminological (P4) vs Fluency (P6), Epistemic (P5) vs Fluency (P6).
+  Monkeypatching `_POLICY_RESOLVER.wins` to return False drops ALL severities
+  from BLOCKING to WARNING. Spec §5.2 universal arbitration contract is now
+  met. Caveat: Factual Integrity (P1) is still never arbitrated — TRA-A5-013
+  partial (no factual-integrity check exists in `verify_output`).
 - **Dependency hygiene** (TRA-017, FIXED in Round 3 remediation commit
   `a3cd2c1`): the 6 unused dependencies (`litellm`, `structlog`,
   `pydantic-settings`, `mdit-py-plugins`, `black`, `pytest-asyncio`) were
@@ -114,13 +123,15 @@ mypy --strict tra
   to ~15. (Note: `structlog` is no longer a listed dependency, so the Phase
   6.3.1 structured-logging gap is moot until `structlog` is re-added with a
   concrete integration plan.)
-- **Benchmark coverage** (TRA-031, improved): 22 of 24 spec cases implemented
-  (S-03 and E-03 still missing); spec target is 100+.
+- **Benchmark coverage** (TRA-031, improved): 24 of 24 spec cases implemented
+  (S-03 and E-03 added in round 4 remediation, TRA-092); spec target is 100+.
 
 See `docs/audit/round4/TRA_audit_findings_register_r4.xlsx` for the full
 Round 4 audit register (47 issues + 19 positive verifications) and
 `docs/audit/round4/TRA_Prototype_Audit_Report_r4.docx` for the narrative
 report. Round 3 deliverables (36 findings) are in `docs/audit/round3/`.
 Round 2 deliverables (41 findings) are in `docs/audit/round2/`. Round 1
-deliverables are in `docs/audit/` (top level). Current test count: **228
-across 18 test files**.
+deliverables are in `docs/audit/` (top level). Round 5 deliverables (68
+findings: 46 issues + 22 positive verifications; 0 BLOCKING / 7 WARNING /
+39 INFO) are in `docs/audit/round5/`. Current test count: **228
+across 16 test files**.

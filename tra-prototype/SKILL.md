@@ -240,13 +240,14 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **228 tests** across 18 test
+All four gates must be green. The full suite is **228 tests** across 16 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
-  (40 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 032,
-  033, 036, 037, 038, 039, 041, 049, 050, 051, 053, 054, 072, 073, 074, 075,
-  076, 077, 078, 088, 089, 093, 096, 097, 098, 099, A4-011, B4-009, F4-006,
-  F4-007)
+  (46 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
+  017, 026, 032, 033, 036, 037, 038 (×4 — UnknownTerm, CertaintyConflict,
+  EntityAmbiguity, UnknownTermRaisedInProduction), 039, 041, 042, 049, 050,
+  051, 053, 054, 072, 073, 074, 075, 076, 077, 078, 088, 089, 093, 096, 097,
+  098, 099, A4-011, B4-009, F4-006, F4-007)
 - `test_tra043_protocol.py` — LanguageModuleProtocol type-safety tests
 - `test_tra047_config_robustness.py` — BootstrapConfig `from_yaml`/`extra='forbid'` tests
 - `test_tra071_broken_markdown.py` — unclosed-fence structural validation tests
@@ -331,6 +332,16 @@ security fixes (TRA-076/077/078) verified holding. See
 register and `../docs/audit/round4/remediation_plan_r4.md` for the
 5-batch TDD remediation plan.
 
+**Round 5** (68 findings: 46 issues + 22 positive verifications at HEAD `5476faf`):
+0 BLOCKING / 7 WARNING / 39 INFO. 0 regressions — every R4 fix that landed is
+still present. All 4 critical invariants hold. TRA-013 byte-reproducibility
+HOLDS within HEAD (audit_trace.jsonl sha256 `902298b3...` x2 across cold-cache
+L4 runs; differs from R4 baseline `263b901e...` because R4 Batch 2 enriched
+audit-trail content via TRA-038/042/072). 3 OWASP security fixes verified
+holding, mutation-tested. See `../docs/audit/round5/TRA_audit_findings_register_r5.xlsx`
+for the full register and `../docs/audit/round5/remediation_plan_r5.md` for
+the 5-batch TDD remediation plan.
+
 **Round 4 remediation — Batch 1** (commits `f226582` through `e54b7a7`):
 7 of 47 issues fixed via TDD. Test count 199 → 210 (+11 new regression tests).
 - TRA-C4-013 (BLOCKING): tra-prototype/README.md CLI examples fixed (`f226582`).
@@ -385,6 +396,10 @@ machine-readable register.
   `TRA_audit_findings_register_r4.xlsx`, `TRA_audit_severity_heatmap_r4.png`,
   `master_findings_register_r4.json`, `remediation_plan_r4.md`, per-track findings
   (`track_{a4,b4,c4,d4,e4,f4,r4}_*.md`)
+- **Round 5**: `../docs/audit/round5/` — `TRA_Prototype_Audit_Report_r5.docx`,
+  `TRA_audit_findings_register_r5.xlsx`, `TRA_audit_severity_heatmap_r5.png`,
+  `master_findings_register_r5.json`, `remediation_plan_r5.md`, per-track findings
+  (`track_{a5,b5,c5,d5,e5,f5,r5}_*.md`)
 
 ---
 
