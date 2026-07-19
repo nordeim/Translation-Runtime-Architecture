@@ -100,7 +100,15 @@ def analyze_document(
     source = sanitize_input(source)
 
     if not source.strip():
-        raise TRAException("EMPTY_SOURCE: document contains no translatable content")
+        # TRA-E5-003 (round 5): raise BrokenMarkdown (not base TRAException)
+        # so route_exception dispatches to recover_broken_markdown which
+        # returns Severity.BLOCKING per Spec §6 BROKEN_MARKDOWN. Previously
+        # raised TRAException("EMPTY_SOURCE") which fell through to the
+        # default route_exception return (WARNING + PRESERVE_SOURCE) —
+        # violating the Spec §6 "Blocking Error" mandate.
+        raise BrokenMarkdown(
+            detail="EMPTY_SOURCE: document contains no translatable content"
+        )
 
     try:
         structural_map, registry = build_structural_map(source)

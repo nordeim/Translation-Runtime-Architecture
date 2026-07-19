@@ -1,5 +1,10 @@
 """E2E test: run the full TRA pipeline on to_translate.md with a manual
-translation hijacking the llm_translate seam.
+translation via the llm_translate dependency-injection seam.
+
+TRA-D5-002 (round 5): previously this script used module-level monkeypatching
+(`kernel_mod.translate_segment = patched_translate`) to hijack the LLM seam.
+Now uses the proper DI pattern: passes `llm_translate` callback to
+`TRAKernel.run()`.
 
 This simulates an AI-powered translation where the LLM provides the
 translation and the TRA engine handles analysis, verification, repair,
@@ -34,9 +39,8 @@ cfg = cfg.model_copy(
     }
 )
 
-# Hijack the llm_translate seam: return the manual translation.
-# The kernel imports translate_segment directly, so we must patch the
-# reference in the kernel's namespace (not isa's).
+# TRA-D5-002 (round 5): use the DI seam instead of module-level monkeypatching.
+# The callback receives (source_segment, ctx) and returns the translated string.
 call_count = 0
 
 
@@ -47,21 +51,9 @@ def manual_llm(source_segment: str, ctx: object) -> str:
     return manual_translation
 
 
-import tra.kernel as kernel_mod  # noqa: E402
-
-orig_translate = kernel_mod.translate_segment
-
-
-def patched_translate(source_segment, ctx, cache, evidence, audit, **kwargs):
-    kwargs["llm_translate"] = manual_llm
-    return orig_translate(source_segment, ctx, cache, evidence, audit, **kwargs)
-
-
-kernel_mod.translate_segment = patched_translate
-
 # Run the full pipeline.
 print("=" * 70)
-print("E2E Test: TRA pipeline with manual LLM translation")
+print("E2E Test: TRA pipeline with manual LLM translation (DI seam)")
 print("=" * 70)
 print(
     f"Source: to_translate.md ({len(source)} chars, {source.count(chr(10)) + 1} lines)"
@@ -72,7 +64,7 @@ print()
 
 kernel = TRAKernel(cfg)
 try:
-    target = kernel.run(source)
+    target = kernel.run(source, llm_translate=manual_llm)
     print()
     print(f"Pipeline completed. Output length: {len(target)} chars")
     print(f"Output matches manual translation: {target == manual_translation}")

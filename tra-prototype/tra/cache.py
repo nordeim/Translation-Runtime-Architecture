@@ -11,11 +11,18 @@ upgrade) invalidates prior entries automatically.
 
 Scope: cache only atomic ops (TRANSLATE_SEGMENT, REPAIR_SEGMENT), never a
 whole document. No TTL — technical facts are static.
+
+TRA-079 (round 5): cache values are HMAC-SHA256 signed to detect tampering.
+An attacker who can write to the cache directory could otherwise inject
+bogus translations. The HMAC key is a fixed app-level secret (defense-in-
+depth; the cache directory is assumed trusted per the single-user-dev
+threat model).
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from pathlib import Path
 from typing import Any
@@ -23,6 +30,24 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from .memory import Entity, GlossaryEntry, PolicyPriority
+
+# TRA-079 (round 5): fixed app-level HMAC secret. This is NOT cryptographically
+# secret (it's in the source code), but it protects against an attacker who
+# can write to the cache directory but not read the source code. For a stronger
+# threat model, derive the key from an environment variable or a per-install
+# secret generated at first run.
+_CACHE_HMAC_KEY = b"tra-prototype-cache-integrity-key-v1"
+
+
+def _sign_value(value: str) -> str:
+    """Return the HMAC-SHA256 signature of `value` as a hex string."""
+    return hmac.new(_CACHE_HMAC_KEY, value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _verify_signature(value: str, expected_hmac: str) -> bool:
+    """Return True if the HMAC of `value` matches `expected_hmac`."""
+    actual = _sign_value(value)
+    return hmac.compare_digest(actual, expected_hmac)
 
 
 def _canonical_json(payload: Any) -> str:
@@ -105,12 +130,23 @@ class TranslationCache:
         if raw is None:
             return None
         # TRA-077: cache stores JSON strings (not pickle/dict) to prevent
-        # insecure deserialization (OWASP A08). Parse the JSON string back
-        # into a TranslationResult.
+        # insecure deserialization (OWASP A08).
+        # TRA-079 (round 5): cache values are HMAC-signed. Format:
+        # "{hmac_hex}:{json_value}". Verify the HMAC before parsing; if
+        # verification fails (tampered entry), treat as cache miss.
         if isinstance(raw, str):
+            # Check for HMAC prefix (format: "{hmac}:{value}").
+            if ":" not in raw or len(raw.split(":", 1)[0]) != 64:
+                # Old-format entry (no HMAC) — treat as cache miss.
+                # The next set() will write the HMAC-signed format.
+                return None
+            hmac_part, _, value_part = raw.partition(":")
+            if not _verify_signature(value_part, hmac_part):
+                # Tampered entry — treat as cache miss (don't crash).
+                return None
             import json
 
-            parsed = json.loads(raw)
+            parsed = json.loads(value_part)
             result = TranslationResult.model_validate(parsed)
         else:
             # Backward compat: old pickle entries (dict). Migrate on next set.
@@ -125,7 +161,11 @@ class TranslationCache:
         # pickle by default for non-string values, which allows arbitrary
         # code execution on cache load (OWASP A08). Storing a JSON string
         # makes the cache safe: json.loads() cannot execute code.
-        self._cache.set(key, result.model_dump_json(), expire=None)
+        # TRA-079 (round 5): sign the JSON value with HMAC-SHA256 to detect
+        # tampering. Format: "{hmac_hex}:{json_value}".
+        value = result.model_dump_json()
+        signature = _sign_value(value)
+        self._cache.set(key, f"{signature}:{value}", expire=None)
 
     def invalidate(self, pattern: str | None = None) -> int:
         """Manual invalidation (CLI: tra cache-clear). No TTL otherwise.

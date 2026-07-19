@@ -143,8 +143,9 @@ Additional L3/L4 gates enforced in-band:
   `VERIFY_OUTPUT` hash matches the emitted target (L4 hash-chain integrity).
 
 Writes the translated markdown **plus** runtime artifacts (glossary, entity
-table, structural map, execution log, repair history, audit trace). At L4 it
-additionally writes `evidence_trace.jsonl` and `ambiguity_register.json`.
+table, structural map, style profile, execution log, repair history, audit
+trace). At L4 it additionally writes `evidence_trace.jsonl` and
+`ambiguity_register.json`. That's 7 artifacts at L1-L3, 9 at L4.
 
 ### `validate` — standalone conformance gate
 
@@ -248,16 +249,16 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **289 tests** across 16 test
+All four gates must be green. The full suite is **294 tests** across 16 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
-  (63 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
+  (65 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
   017, 026, 032, 033, 036, 037, 038 (×4 — UnknownTerm, CertaintyConflict,
   EntityAmbiguity, UnknownTermRaisedInProduction), 039, 041, 042, 049, 050,
   051, 053, 054, 072, 073, 074, 075, 076, 077, 078, 088, 089, 093, 096, 097,
-  098, 099, A4-011, A5-003, A5-005, A5-010, A5-013, A5-014, B4-009, B5-009,
-  B5-010, B5-011, B5-012, D5-002, D5-004/005, D5-007, D5-008, D5-016, D5-017,
-  F4-006, F4-007, F5-010, F5-011)
+  098, 099, A4-011, A5-003, A5-005, A5-010, A5-013, A5-014, B4-009, B5-004,
+  B5-009, B5-010, B5-011, B5-012, D5-002, D5-004/005, D5-007, D5-008, D5-016,
+  D5-017, E5-003, F4-006, F4-007, F5-010, F5-011)
 - `test_tra043_protocol.py` — LanguageModuleProtocol type-safety tests
 - `test_tra047_config_robustness.py` — BootstrapConfig `from_yaml`/`extra='forbid'` tests
 - `test_tra071_broken_markdown.py` — unclosed-fence structural validation tests
@@ -417,6 +418,16 @@ machine-readable register.
   (benchmark 24 → 36 cases), TRA-D5-002 (LLM seam DI: `TRAKernel.run(llm_translate=)`),
   TRA-D5-007 (HITL e2e tests), TRA-D5-004/005 (review_decision override/skip/
   on_override tests). +39 tests.
+- **Batch E** (latest commit): 6 outstanding findings — TRA-E5-003
+  (EMPTY_SOURCE now raises BrokenMarkdown → BLOCKING severity per Spec §6,
+  was base TRAException → WARNING), TRA-E5-015 (SKILL.md §4 artifact list
+  now includes style_profile.yaml; 9 artifacts at L4), TRA-D5-009
+  (e2e_test.py refactored from module-level monkeypatching to DI),
+  TRA-D5-010 (removed duplicate HITL test from test_phase6_hardening.py),
+  TRA-B5-004/079 (cache HMAC-SHA256 integrity: each entry signed as
+  `{hmac}:{json}`; tampered entries rejected as cache misses), TRA-E5-013
+  (documented verify_output double-call as intentional in kernel.py).
+  +5 tests net (+6 new HMAC tests, -1 duplicate removed).
 
 ### Audit artifacts
 

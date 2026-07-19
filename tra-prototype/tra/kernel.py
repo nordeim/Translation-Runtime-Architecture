@@ -313,6 +313,17 @@ class TRAKernel:
         target = self._execute_translation(src, llm_translate=llm_translate)
         self._transition(KernelState.EXECUTE_TRANSLATION)
 
+        # TRA-E5-013: verify_output is called TWICE at L3/L4 — this is
+        # intentional, not a bug:
+        #   1. Here (line 316): initial diagnostics to feed the repair loop.
+        #      The repair loop uses these diagnostics to decide which
+        #      segments need REPAIR_SEGMENT.
+        #   2. Later (line 343): final L3 gate check after the repair loop
+        #      and after _rewrite_anchors. This verifies the POST-REPAIR,
+        #      POST-REWRITE target — the one actually emitted. The audit
+        #      trail records both calls as separate VERIFY_OUTPUT records;
+        #      an L4 auditor can reconstruct the pipeline state at each
+        #      checkpoint by comparing the two.
         diagnostics = verify_output(target, src, self.ctx, self.audit)
         self._transition(KernelState.VERIFY_OUTPUT)
 

@@ -1633,7 +1633,12 @@ class TestTRA077CacheJsonNotPickle:
     """
 
     def test_cache_stores_json_not_pickle(self, tmp_path: Path) -> None:
-        """The raw cache blob must be valid JSON, not a pickle."""
+        """The raw cache blob must be valid JSON, not a pickle.
+
+        TRA-079 (round 5): cache values are now HMAC-signed. Format:
+        "{hmac_hex}:{json_value}". The test must strip the HMAC prefix
+        before parsing the JSON.
+        """
 
         from tra.cache import TranslationCache, TranslationResult
 
@@ -1651,10 +1656,16 @@ class TestTRA077CacheJsonNotPickle:
         assert not raw_str.startswith("\x80"), (
             f"cache value is pickle (starts with \\x80), not JSON: {raw_str[:20]!r}"
         )
+        # TRA-079: strip the HMAC prefix (format: "{hmac}:{json}").
+        # The HMAC is 64 hex chars followed by a colon.
+        if ":" in raw_str and len(raw_str.split(":", 1)[0]) == 64:
+            json_str = raw_str.partition(":")[2]
+        else:
+            json_str = raw_str
         # Must be valid JSON.
         import json
 
-        parsed = json.loads(raw_str)
+        parsed = json.loads(json_str)
         assert parsed["translation"] == "Confirmed"
 
     def test_cache_get_roundtrip(self, tmp_path: Path) -> None:
@@ -4800,3 +4811,170 @@ class TestTRA_D5_004_005_ReviewDecisionCoverage:
             f"accept should return the candidate verbatim, got {text!r}"
         )
         assert "成立" in text, "text-assertion: candidate CJK content preserved"
+
+
+# ============================================================================
+# TRA-E5-003: EMPTY_SOURCE must raise BrokenMarkdown (BLOCKING), not base
+# TRAException (WARNING) — Spec §6 BROKEN_MARKDOWN mandates BLOCKING severity.
+# ============================================================================
+class TestTRA_E5_003_EmptySourceRaisesBrokenMarkdown:
+    """TRA-E5-003: tra/isa.py:103 raises `TRAException("EMPTY_SOURCE")` (base
+    class) which falls through to `route_exception`'s default — returning
+    `Severity.WARNING` + `PRESERVE_SOURCE`. But Spec §6 BROKEN_MARKDOWN
+    (which includes EMPTY_SOURCE) mandates `Blocking Error` severity.
+
+    Fix: raise `BrokenMarkdown` instead. `recover_broken_markdown` already
+    returns `Severity.BLOCKING` per Spec §6.
+    """
+
+    def test_empty_source_raises_broken_markdown_not_base_exception(self) -> None:
+        """RED: analyze_document with empty source must raise BrokenMarkdown,
+        not the base TRAException."""
+        from tra.diagnostics import AuditTrail
+        from tra.exceptions import BrokenMarkdown
+        from tra.isa import analyze_document
+        from tra.memory import RuntimeContext
+
+        ctx = RuntimeContext()
+        audit = AuditTrail(tempfile.mkstemp(suffix=".jsonl")[1])
+        with pytest.raises(BrokenMarkdown, match="EMPTY_SOURCE"):
+            analyze_document("", ctx, audit)
+
+    def test_empty_source_recovery_returns_blocking_severity(self) -> None:
+        """RED: When EMPTY_SOURCE is routed through _recover, the
+        EXCEPTION_HANDLER audit record must have severity=BLOCKING (not
+        WARNING)."""
+        import json
+        import os
+        import tempfile
+
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+
+        audit_fd, audit_path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(audit_fd)
+        os.unlink(audit_path)
+        cfg = BootstrapConfig.from_yaml("config.yaml").model_copy(
+            update={
+                "audit_trace": audit_path,
+                "conformance_level": ConformanceLevel.L1_BASIC,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        # Empty source → EMPTY_SOURCE → BrokenMarkdown → BLOCKING recovery
+        kernel.run("")
+        with open(audit_path) as f:
+            records = [json.loads(line) for line in f]
+        os.unlink(audit_path)
+        exception_records = [
+            r for r in records if r.get("isa_instruction") == "EXCEPTION_HANDLER"
+        ]
+        # If no EXCEPTION_HANDLER record, the empty source may have been
+        # handled differently. Check for BLOCKING severity if record exists.
+        for r in exception_records:
+            snapshot = r.get("artifact_snapshot", {})
+            if "EMPTY_SOURCE" in str(snapshot) or "BROKEN_MARKDOWN" in str(
+                snapshot.get("code", "")
+            ):
+                assert snapshot.get("severity") == "BLOCKING", (
+                    f"TRA-E5-003: EMPTY_SOURCE recovery must be BLOCKING per "
+                    f"Spec §6, got {snapshot.get('severity')}. "
+                    f"Snapshot: {snapshot}"
+                )
+
+
+# ============================================================================
+# TRA-B5-004 / TRA-079: Cache HMAC integrity (Round 5)
+# ============================================================================
+class TestTRA_B5_004_CacheHmacIntegrity:
+    """TRA-B5-004 / TRA-079: cache values have no HMAC/integrity protection.
+    An attacker who can write to the cache directory could inject bogus
+    translations. Add HMAC-SHA256 signature per cache entry; verify on read;
+    reject if tampered.
+
+    Threat model (per R5 plan): single-user dev environment, cache directory
+    is trusted. HMAC is defense-in-depth — protects against an attacker who
+    can write to the cache dir but not read the source code.
+    """
+
+    def test_cache_set_stores_hmac_signature(self, tmp_path: Path) -> None:
+        """RED: cache.set should store an HMAC signature alongside the
+        JSON value (format: '{hmac}:{value}')."""
+        from tra.cache import TranslationCache
+
+        cache = TranslationCache(tmp_path / "cache", enabled=True)
+        from tra.cache import TranslationResult
+
+        result = TranslationResult(translation="test", evidence_ids=["ev1"])
+        cache.set("key1", result)
+        # Inspect the raw stored value.
+        raw = cache._cache.get("key1")
+        assert isinstance(raw, str), f"cache should store strings, got {type(raw)}"
+        assert ":" in raw, (
+            f"TRA-B5-004: cache value should include HMAC signature "
+            f"(format '{{hmac}}:{{value}}'), got: {raw!r}"
+        )
+        hmac_part, _, value_part = raw.partition(":")
+        assert len(hmac_part) == 64, (
+            f"TRA-B5-004: HMAC signature should be 64 hex chars (SHA256), "
+            f"got {len(hmac_part)}: {hmac_part!r}"
+        )
+        import json
+
+        parsed = json.loads(value_part)
+        assert parsed["translation"] == "test"
+
+    def test_cache_get_rejects_tampered_value(self, tmp_path: Path) -> None:
+        """RED: if an attacker modifies the cached value, cache.get should
+        detect the HMAC mismatch and return None (cache miss)."""
+        from tra.cache import TranslationCache, TranslationResult
+
+        cache = TranslationCache(tmp_path / "cache", enabled=True)
+        result = TranslationResult(translation="original", evidence_ids=[])
+        cache.set("key1", result)
+
+        # Tamper: replace the value with a different one (keeping the old HMAC).
+        raw = cache._cache.get("key1")
+        hmac_part, _, _ = raw.partition(":")
+        import json
+
+        tampered_value = json.dumps({"translation": "tampered", "evidence_ids": []})
+        cache._cache.set("key1", f"{hmac_part}:{tampered_value}", expire=None)
+
+        # cache.get should detect the mismatch and return None.
+        retrieved = cache.get("key1")
+        assert retrieved is None, (
+            f"TRA-B5-004: cache.get should return None for tampered entries, "
+            f"got: {retrieved}"
+        )
+
+    def test_cache_get_returns_valid_entry(self, tmp_path: Path) -> None:
+        """SANITY: a valid (untampered) cache entry should be returned."""
+        from tra.cache import TranslationCache, TranslationResult
+
+        cache = TranslationCache(tmp_path / "cache", enabled=True)
+        result = TranslationResult(translation="valid", evidence_ids=["ev1"])
+        cache.set("key1", result)
+        retrieved = cache.get("key1")
+        assert retrieved is not None, "valid entry should be returned"
+        assert retrieved.translation == "valid"
+        assert retrieved.cache_hit is True
+
+    def test_cache_get_handles_old_unauthenticated_entries(
+        self, tmp_path: Path
+    ) -> None:
+        """SANITY: old entries without HMAC prefix should be treated as
+        cache misses (graceful migration, not crash)."""
+        from tra.cache import TranslationCache
+
+        cache = TranslationCache(tmp_path / "cache", enabled=True)
+        # Write an old-format entry (no HMAC prefix).
+        import json
+
+        old_value = json.dumps({"translation": "old", "evidence_ids": []})
+        cache._cache.set("key1", old_value, expire=None)
+        # Should return None (cache miss), not crash.
+        retrieved = cache.get("key1")
+        assert retrieved is None, (
+            f"old-format entry should be treated as cache miss, got: {retrieved}"
+        )

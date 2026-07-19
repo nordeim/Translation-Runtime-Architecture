@@ -12,7 +12,7 @@ from tra.diagnostics import (
     EvidenceRegistry,
     EvidenceType,
 )
-from tra.hitl import format_unrecoverable, review_decision
+from tra.hitl import format_unrecoverable
 from tra.isa import repair_segment, translate_segment
 from tra.kernel import TRAKernel
 from tra.memory import (
@@ -152,19 +152,6 @@ def test_line_by_line_trace_attribution():
     assert trace[0]["evidence_ids"] == [eid]
     # Attributed by substring containment; prose line flagged unattributed.
     assert trace[1]["attributed"] is False
-
-
-def test_hitl_review_decision_accept(monkeypatch):
-    calls: dict[str, str] = {}
-
-    def fake_ask(prompt, choices=None, default=None):  # noqa: ANN001
-        calls["prompt"] = prompt
-        return "accept"
-
-    monkeypatch.setattr("tra.hitl.Prompt.ask", staticmethod(fake_ask))
-    resolution, text = review_decision("amb", "src", "candidate")
-    assert resolution == "accept"
-    assert text == "candidate"
 
 
 def test_hitl_format_unrecoverable():
