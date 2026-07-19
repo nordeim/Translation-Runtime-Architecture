@@ -122,6 +122,17 @@ def cli(ctx: click.Context, config_path: str) -> None:
     default=False,
     help="Pause for human review on UNRECOVERABLE (RAISE_FLAG) decisions.",
 )
+@click.option(
+    "--force-unrecoverable",
+    is_flag=True,
+    default=False,
+    help=(
+        "Debug flag (TRA-E5-005): inject a synthetic BLOCKING diagnostic "
+        "that the repair loop can't resolve, forcing the UNRECOVERABLE → "
+        "HITL path. Enables e2e testing of the HITL flow without needing "
+        "a genuinely unrepairable input."
+    ),
+)
 @click.pass_context
 def translate(
     ctx: click.Context,
@@ -130,6 +141,7 @@ def translate(
     level: str | None,
     output: Path | None,
     interactive: bool,
+    force_unrecoverable: bool,
 ) -> None:
     """Translate INPUT_MD through the full TRA pipeline."""
     cfg = BootstrapConfig.from_yaml(ctx.obj["config_path"])
@@ -163,7 +175,12 @@ def translate(
     from tra.modules.registry import build_default_registry
 
     registry = build_default_registry()
-    kernel = TRAKernel(cfg, registry=registry, interactive=interactive)
+    kernel = TRAKernel(
+        cfg,
+        registry=registry,
+        interactive=interactive,
+        force_unrecoverable=force_unrecoverable,
+    )
     try:
         target = kernel.run(input_md)
     except ConformanceFailure as exc:

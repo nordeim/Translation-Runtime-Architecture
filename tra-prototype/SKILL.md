@@ -249,22 +249,52 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **294 tests** across 16 test
+All four gates must be green. The full suite is **301 tests** across 16 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
-  (65 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
+  (68 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
   017, 026, 032, 033, 036, 037, 038 (×4 — UnknownTerm, CertaintyConflict,
   EntityAmbiguity, UnknownTermRaisedInProduction), 039, 041, 042, 049, 050,
   051, 053, 054, 072, 073, 074, 075, 076, 077, 078, 088, 089, 093, 096, 097,
   098, 099, A4-011, A5-003, A5-005, A5-010, A5-013, A5-014, B4-009, B5-004,
-  B5-009, B5-010, B5-011, B5-012, D5-002, D5-004/005, D5-007, D5-008, D5-016,
-  D5-017, E5-003, F4-006, F4-007, F5-010, F5-011)
+  B5-009, B5-010, B5-011, B5-012, D5-002, D5-004/005, D5-007, D5-008, D5-011,
+  D5-016, D5-017, E5-003, E5-005, F4-006, F4-007, F5-010, F5-011,
+  TypeSafety_SelectModuleReturnType)
 - `test_tra043_protocol.py` — LanguageModuleProtocol type-safety tests
 - `test_tra047_config_robustness.py` — BootstrapConfig `from_yaml`/`extra='forbid'` tests
 - `test_tra071_broken_markdown.py` — unclosed-fence structural validation tests
 - `test_e2e_to_translate.py` — E2E tests on `to_translate.md` with LLM seam
   via dependency injection (12 tests: L3 pipeline, L4 forensics, byte-reproducibility)
 - `test_benchmark.py` — L3 gate coverage (asserts zero `BLOCKING` across 36 S/F/T/D/E/R cases)
+
+### Mutation testing (TRA-D5-011 / TRA-094, fixed in round 5)
+
+`mutmut` is configured in `pyproject.toml` for continuous mutation testing.
+Run it with:
+
+```bash
+cd tra-prototype
+. .venv/bin/activate
+mutmut run
+```
+
+This applies small mutations to the `tra/` package (e.g. `+` → `-`,
+`==` → `!=`, `True` → `False`) and checks whether the test suite catches
+each mutation. A mutation is "killed" if a test fails; "survived" if all
+tests still pass (indicating a test-coverage gap).
+
+Expected mutation score: **≥80%** (target: 90%+). The configuration is in
+`[tool.mutmut]` in `pyproject.toml`:
+
+```toml
+[tool.mutmut]
+paths_to_mutate = "tra"
+tests_dir = "tests"
+max_stack_depth = 5
+```
+
+To view results: `mutmut results`. To see a specific survived mutation:
+`mutmut show <mutation-id>`.
 
 ---
 
@@ -418,7 +448,7 @@ machine-readable register.
   (benchmark 24 → 36 cases), TRA-D5-002 (LLM seam DI: `TRAKernel.run(llm_translate=)`),
   TRA-D5-007 (HITL e2e tests), TRA-D5-004/005 (review_decision override/skip/
   on_override tests). +39 tests.
-- **Batch E** (latest commit): 6 outstanding findings — TRA-E5-003
+- **Batch E** (commit `57997a8`): 6 outstanding findings — TRA-E5-003
   (EMPTY_SOURCE now raises BrokenMarkdown → BLOCKING severity per Spec §6,
   was base TRAException → WARNING), TRA-E5-015 (SKILL.md §4 artifact list
   now includes style_profile.yaml; 9 artifacts at L4), TRA-D5-009
@@ -428,6 +458,15 @@ machine-readable register.
   `{hmac}:{json}`; tampered entries rejected as cache misses), TRA-E5-013
   (documented verify_output double-call as intentional in kernel.py).
   +5 tests net (+6 new HMAC tests, -1 duplicate removed).
+- **Batch F** (latest commit): 3 outstanding findings — TRA-D5-011/094
+  (mutation testing framework: `mutmut` added to dev deps + `[tool.mutmut]`
+  configured in pyproject.toml + SKILL.md §7 workflow documented), type-
+  safety residual (`_select_module` return type `Any` →
+  `LanguageModuleProtocol`; `source_only_match: Any` →
+  `LanguageModuleProtocol | None`), TRA-E5-005 (`--force-unrecoverable`
+  debug flag added to CLI for HITL e2e testability; injects synthetic
+  BLOCKING diagnostic that forces the UNRECOVERABLE → HITL path).
+  +7 tests.
 
 ### Audit artifacts
 

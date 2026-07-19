@@ -16,7 +16,6 @@ from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -44,6 +43,7 @@ from .memory import (
     StructuralMap,
     StructuralNode,
 )
+from .modules.base import LanguageModuleProtocol
 from .modules.registry import ModuleRegistry
 from .modules.zh_en import ZHENModule
 from .recovery import route_exception
@@ -112,6 +112,7 @@ class TRAKernel:
         interactive: bool = False,
         deterministic: bool = True,
         registry: ModuleRegistry | None = None,
+        force_unrecoverable: bool = False,
     ) -> None:
         """Initialize the kernel.
 
@@ -126,9 +127,14 @@ class TRAKernel:
                 kernel selects the language module from the registry based
                 on ``config.language_pair``. If None, falls back to the
                 default ZHENModule (backward compat).
+            force_unrecoverable: Debug flag (TRA-E5-005). If True, inject
+                a synthetic BLOCKING diagnostic that the repair loop can't
+                resolve, forcing the UNRECOVERABLE → HITL path. Enables
+                e2e testing of the HITL flow.
         """
         self.config = config
         self.interactive = interactive
+        self.force_unrecoverable = force_unrecoverable
         self.cache = TranslationCache(
             config.cache_directory, enabled=config.cache_enabled
         )
@@ -150,7 +156,9 @@ class TRAKernel:
         self.state = KernelState.BOOTSTRAP
 
     @staticmethod
-    def _select_module(language_pair: str, registry: ModuleRegistry | None) -> Any:
+    def _select_module(
+        language_pair: str, registry: ModuleRegistry | None
+    ) -> LanguageModuleProtocol:
         """Select the language module for the configured pair (TRA-002).
 
         If a registry is supplied, prefer a FULL direction match (e.g.
@@ -170,7 +178,7 @@ class TRAKernel:
                 req_direction.split("->", 1)[0].strip() if "->" in req_direction else ""
             )
             # Pass 1: prefer a full-direction match.
-            source_only_match: Any = None
+            source_only_match: LanguageModuleProtocol | None = None
             for mod in registry.all():
                 if getattr(mod, "kind", "") != "language":
                     continue
@@ -325,6 +333,20 @@ class TRAKernel:
         #      an L4 auditor can reconstruct the pipeline state at each
         #      checkpoint by comparing the two.
         diagnostics = verify_output(target, src, self.ctx, self.audit)
+        # TRA-E5-005 (round 5): if --force-unrecoverable is set, inject a
+        # synthetic BLOCKING diagnostic with a special subsystem that
+        # repair_segment can't resolve. This forces the UNRECOVERABLE →
+        # HITL path, enabling e2e testing of the HITL flow.
+        if self.force_unrecoverable:
+            diagnostics.append(
+                Diagnostic(
+                    severity=Severity.BLOCKING,
+                    subsystem="force_unrecoverable",
+                    issue="Synthetic BLOCKING diagnostic for HITL testing",
+                    evidence="--force-unrecoverable flag was set",
+                    action="RAISE_FLAG",
+                )
+            )
         self._transition(KernelState.VERIFY_OUTPUT)
 
         target = self._repair_loop(target, src, diagnostics)

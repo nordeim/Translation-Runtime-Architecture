@@ -21,6 +21,9 @@ dev = [
     "pytest>=8.2",
     "ruff>=0.5",
     "mypy>=1.10",
+    # TRA-D5-011 (round 5): mutation testing framework for continuous
+    # mutation score measurement. Run with: mutmut run
+    "mutmut>=3.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -49,3 +52,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+# TRA-D5-011 (round 5): mutation testing configuration.
+# Run with: mutmut run
+# Expected mutation score: >=80% (target: 90%+).
+# Mutations are applied to tra/ package only; tests/ are not mutated.
+[tool.mutmut]
+paths_to_mutate = "tra"
+tests_dir = "tests"
+max_stack_depth = 5

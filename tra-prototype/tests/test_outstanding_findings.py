@@ -4978,3 +4978,195 @@ class TestTRA_B5_004_CacheHmacIntegrity:
         assert retrieved is None, (
             f"old-format entry should be treated as cache miss, got: {retrieved}"
         )
+
+
+# ============================================================================
+# TRA-D5-011 / TRA-094: Mutation testing framework integration (Round 5)
+# ============================================================================
+class TestTRA_D5_011_MutationTestingConfigured:
+    """TRA-D5-011 / TRA-094: no mutation testing framework in pyproject.toml.
+    Manual probes were performed at each audit round, but there's no
+    continuous mutation testing in CI.
+
+    Fix: add `mutmut` to dev deps + configure `[tool.mutmut]` in
+    pyproject.toml. Add a regression test that asserts the configuration
+    exists so it can't be silently removed.
+    """
+
+    def test_mutmut_in_dev_dependencies(self) -> None:
+        """RED: mutmut must be listed in pyproject.toml dev deps."""
+        from pathlib import Path
+
+        pyproject = Path(
+            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/pyproject.toml"
+        ).read_text()
+        # Check that mutmut is in the dev optional-dependencies.
+        assert "mutmut" in pyproject, (
+            "TRA-D5-011: mutmut must be listed in pyproject.toml "
+            "[project.optional-dependencies] dev = [...]"
+        )
+
+    def test_mutmut_tool_section_configured(self) -> None:
+        """RED: [tool.mutmut] section must exist in pyproject.toml."""
+        from pathlib import Path
+
+        pyproject = Path(
+            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/pyproject.toml"
+        ).read_text()
+        assert "[tool.mutmut]" in pyproject, (
+            "TRA-D5-011: [tool.mutmut] section must exist in pyproject.toml "
+            "with paths_to_mutate targeting the tra/ package."
+        )
+        # Verify the section configures paths_to_mutate.
+        assert "paths_to_mutate" in pyproject, (
+            "TRA-D5-011: [tool.mutmut] must set paths_to_mutate = 'tra'"
+        )
+
+    def test_mutation_testing_workflow_documented(self) -> None:
+        """RED: SKILL.md §7 must document the mutation testing workflow."""
+        from pathlib import Path
+
+        skill = Path(
+            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/SKILL.md"
+        ).read_text()
+        assert "mutmut" in skill.lower(), (
+            "TRA-D5-011: SKILL.md §7 must document the mutation testing "
+            "workflow (how to run mutmut, expected mutation score)."
+        )
+
+
+# ============================================================================
+# Type-safety residual: _select_module return type Any -> ModuleInterface | None
+# ============================================================================
+class TestTypeSafety_SelectModuleReturnType:
+    """Type-safety residual: `_select_module` returns `Any` but actually
+    returns `ModuleInterface | None`. The `source_only_match: Any` local
+    variable has the same issue. Tightening these lets mypy catch typos
+    in method names at call sites.
+    """
+
+    def test_select_module_return_type_is_module_interface(self) -> None:
+        """RED: _select_module return type should be a concrete protocol
+        (LanguageModuleProtocol or ModuleInterface), not Any."""
+        import ast
+        from pathlib import Path
+
+        src = Path(
+            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/kernel.py"
+        ).read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_select_module":
+                ret = ast.unparse(node.returns)
+                # Accept either LanguageModuleProtocol or ModuleInterface
+                # (both are concrete types; Any is not acceptable).
+                assert "LanguageModuleProtocol" in ret or "ModuleInterface" in ret, (
+                    f"_select_module return type should be "
+                    f"LanguageModuleProtocol or ModuleInterface, got {ret}"
+                )
+                assert "Any" not in ret, (
+                    f"_select_module return type should not be Any, got {ret}"
+                )
+                return
+        raise AssertionError("_select_module function not found in kernel.py")
+
+    def test_no_any_type_in_select_module_body(self) -> None:
+        """RED: _select_module body should not use `Any` for
+        source_only_match local variable."""
+        import subprocess
+
+        result = subprocess.run(
+            ["rg", "-n", "source_only_match: Any", "tra/kernel.py"],
+            capture_output=True,
+            text=True,
+            cwd="/home/z/my-project/Translation-Runtime-Architecture/tra-prototype",
+        )
+        assert result.returncode == 1, (
+            f"source_only_match should not be typed as Any:\n{result.stdout}"
+        )
+
+
+# ============================================================================
+# TRA-E5-005: --force-unrecoverable debug flag for HITL testability (Round 5)
+# ============================================================================
+class TestTRA_E5_005_ForceUnrecoverableFlag:
+    """TRA-E5-005: `Unrecoverable` cannot be triggered through normal CLI
+    input at L3/L4 with the rule-based translation path. The HITL path is
+    only exercised by unit tests of review_decision.
+
+    Fix: add a `--force-unrecoverable` debug flag to the CLI that injects
+    a synthetic BLOCKING diagnostic which the repair loop can't resolve,
+    forcing the Unrecoverable → HITL path. This enables true e2e testing
+    of the HITL flow.
+    """
+
+    def test_cli_translate_has_force_unrecoverable_option(self) -> None:
+        """RED: `translate` command should accept --force-unrecoverable."""
+        from click.testing import CliRunner
+        from tra_cli import cli
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["translate", "--help"])
+        assert result.exit_code == 0
+        assert "--force-unrecoverable" in result.output, (
+            "TRA-E5-005: translate --help should list --force-unrecoverable "
+            "debug flag for HITL testability."
+        )
+
+    def test_force_unrecoverable_triggers_hitl_path(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """RED: when --force-unrecoverable + --interactive are both set,
+        the HITL review_decision should be called."""
+        from click.testing import CliRunner
+        from tra_cli import cli
+
+        # Simulate stdin = "skip" (so the pipeline completes).
+        hitl_called = False
+
+        def fake_ask(prompt, choices=None, default=None):
+            nonlocal hitl_called
+            hitl_called = True
+            return "skip"
+
+        monkeypatch.setattr("tra.hitl.Prompt.ask", staticmethod(fake_ask))
+
+        config_yaml = tmp_path / "config.yaml"
+        config_yaml.write_text(
+            "language_pair: ZH -> EN\n"
+            "domain: test\n"
+            "conformance_level: L1_BASIC\n"
+            "model_endpoint: rule-based\n"
+            "model_version: test\n"
+            f"base_dir: {tmp_path}\n"
+            "cache:\n"
+            f"  directory: {tmp_path}/cache\n"
+            "artifacts:\n"
+            f"  compilation_dir: {tmp_path}/art\n"
+            f"  audit_trace: {tmp_path}/audit.jsonl\n",
+            encoding="utf-8",
+        )
+        input_md = tmp_path / "input.md"
+        input_md.write_text("# Test\n\nText.\n", encoding="utf-8")
+        output_md = tmp_path / "out.md"
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--config",
+                str(config_yaml),
+                "translate",
+                str(input_md),
+                "--level",
+                "L1",
+                "-o",
+                str(output_md),
+                "--interactive",
+                "--force-unrecoverable",
+            ],
+        )
+        assert hitl_called, (
+            "TRA-E5-005: --force-unrecoverable + --interactive should trigger "
+            f"the HITL review_decision path. CLI output: {result.output}"
+        )

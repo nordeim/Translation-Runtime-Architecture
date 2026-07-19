@@ -1182,6 +1182,14 @@ def repair_segment(
             raise Unrecoverable(
                 "UNRECOVERABLE: structural repair needs manual intervention"
             )
+    elif diagnostic.subsystem == "force_unrecoverable":
+        # TRA-E5-005 (round 5): synthetic diagnostic injected by
+        # --force-unrecoverable debug flag. Always raise Unrecoverable
+        # so the HITL path fires for e2e testing.
+        raise Unrecoverable(
+            "UNRECOVERABLE: --force-unrecoverable synthetic diagnostic "
+            "(HITL testability flag)"
+        )
 
     # Re-verify the repaired segment does not introduce new BLOCKING.
     # Per the surgical-repair invariant (TRA-ISA-REFERENCE.md §REPAIR_SEGMENT:
