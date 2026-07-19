@@ -1,0 +1,34 @@
+{
+  "total_findings": 68,
+  "by_severity_all": {
+    "WARNING": 14,
+    "INFO": 54
+  },
+  "by_finding_type": {
+    "positive_verification": 22,
+    "issue": 46
+  },
+  "issues_only": {
+    "count": 46,
+    "by_severity": {
+      "WARNING": 7,
+      "INFO": 39
+    }
+  },
+  "by_track": {
+    "A5": 10,
+    "B5": 17,
+    "C5": 13,
+    "D5": 19,
+    "E5": 17,
+    "F5": 12
+  },
+  "by_round4_status_normalized": {
+    "persistent": 27,
+    "new": 12,
+    "fixed-and-verified": 12,
+    "partial": 8,
+    "verified-holding": 6,
+    "fixed": 3
+  }
+}

@@ -1,0 +1,36 @@
+TRA Round 5 Audit — Master Findings Register Summary
+============================================================
+
+HEAD audited: 5476faf
+Total findings (deduplicated): 68
+
+By severity (all findings, including positive verifications):
+  BLOCKING  : 0
+  WARNING   : 14
+  INFO      : 54
+
+By finding type:
+  positive_verification    : 22
+  issue                    : 46
+
+Issues only (excluding positive verifications):
+  Total issues: 46
+  BLOCKING  : 0
+  WARNING   : 7
+  INFO      : 39
+
+By track:
+  A5: 10
+  B5: 17
+  C5: 13
+  D5: 19
+  E5: 17
+  F5: 12
+
+By Round 4 status (normalized):
+  persistent               : 27
+  new                      : 12
+  fixed-and-verified       : 12
+  partial                  : 8
+  verified-holding         : 6
+  fixed                    : 3
