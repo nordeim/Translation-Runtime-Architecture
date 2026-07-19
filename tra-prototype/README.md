@@ -149,5 +149,5 @@ report. Round 4 deliverables (47 issues + 19 positive verifications) are in
 `docs/audit/round4/`. Round 3 deliverables (36 findings) are in
 `docs/audit/round3/`. Round 2 deliverables (41 findings) are in
 `docs/audit/round2/`. Round 1 deliverables are in `docs/audit/` (top level).
-Current test count: **304 across 16 test files** (was 228 at Round 5 audit
-baseline; +76 from Round 5 remediation commits `eb3d574` through the latest).
+Current test count: **309 across 16 test files** (was 228 at Round 5 audit
+baseline; +81 from Round 5 remediation commits `eb3d574` through the latest).

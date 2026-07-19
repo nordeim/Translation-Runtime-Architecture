@@ -10,6 +10,7 @@ the models but never influences control flow.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -139,6 +140,35 @@ class StructuralMap(BaseModel):
             return sum(1 + walk(n.children) for n in nodes)
 
         return walk(self.nodes)
+
+    def iter_leaf_segments(self) -> Iterable[tuple[int, StructuralNode]]:
+        """Yield (index, node) tuples for translatable leaf segments.
+
+        TRA-001 (round 5 Phase 8): leaf segments are nodes whose kind is
+        HEADING, PARAGRAPH, LIST_ITEM, or TABLE_CELL and whose text is not
+        None. These are the units that TRANSLATE_SEGMENT should operate on
+        per Spec §3 (leaf-level: sentence, list item, table cell, heading).
+
+        The index is 0-based, assigned in document order (depth-first walk).
+        """
+        # NodeKinds that are translatable leaf segments.
+        leaf_kinds = {
+            NodeKind.HEADING,
+            NodeKind.PARAGRAPH,
+            NodeKind.LIST_ITEM,
+            NodeKind.TABLE_CELL,
+        }
+        idx = 0
+
+        def walk(nodes: list[StructuralNode]) -> Iterable[tuple[int, StructuralNode]]:
+            nonlocal idx
+            for node in nodes:
+                if node.kind in leaf_kinds and node.text is not None:
+                    yield idx, node
+                    idx += 1
+                yield from walk(node.children)
+
+        yield from walk(self.nodes)
 
 
 class GlossaryEntry(BaseModel):

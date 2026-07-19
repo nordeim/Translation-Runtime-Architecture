@@ -249,10 +249,10 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **304 tests** across 16 test
+All four gates must be green. The full suite is **309 tests** across 16 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
-  (70 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
+  (71 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
   017, 026, 032, 033, 036, 037, 038 (×4 — UnknownTerm, CertaintyConflict,
   EntityAmbiguity, UnknownTermRaisedInProduction), 039, 041, 042, 049, 050,
   051, 053, 054, 072, 073, 074, 075, 076, 077, 078, 088, 089, 093, 096, 097,
@@ -468,12 +468,20 @@ machine-readable register.
   debug flag added to CLI for HITL e2e testability; injects synthetic
   BLOCKING diagnostic that forces the UNRECOVERABLE → HITL path).
   +7 tests.
-- **Batch G** (latest commit): 2 type-safety residuals —
+- **Batch G** (commit `5a4926c`): 2 type-safety residuals —
   `RuntimeContext.anchor_registry: Any` → `AnchorRegistry | None`
   (used TYPE_CHECKING import to break circular dependency with anchor.py;
   added `RuntimeContext.model_rebuild()` at end of anchor.py so Pydantic
   resolves the forward reference), `_rule_translate(module: Any = None)` →
   `module: LanguageModuleProtocol | None = None`. +3 tests.
+- **Batch H** (latest commit): 2 findings — TRA-001 Phase 8 (per-leaf
+  segment translation: `StructuralMap.iter_leaf_segments()` method added;
+  `_execute_translation` refactored to walk leaf segments and call
+  `translate_segment` per leaf; per-leaf inline-code protection; LLM path
+  uses whole-doc translation for backward compat; +5 tests) + TRA-040
+  (documented EXCEPTION_HANDLER/HALT_ERROR design decision in KernelState
+  docstring: intentional side-channel action, not lifecycle state; pending
+  spec clarification).
 
 ### Audit artifacts
 

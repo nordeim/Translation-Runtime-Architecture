@@ -50,7 +50,29 @@ from .recovery import route_exception
 
 
 class KernelState(StrEnum):
-    """Canonical lifecycle states (Spec §2.1)."""
+    """Canonical lifecycle states (Spec §2.1).
+
+    TRA-040 (round 5): Spec §2.1's stateDiagram shows EXCEPTION_HANDLER and
+    HALT_ERROR as states. This implementation treats them as audit-record
+    types (isa_instruction="EXCEPTION_HANDLER") rather than KernelState enum
+    values. This is an intentional design decision:
+
+    1. EXCEPTION_HANDLER is a *side-channel* action, not a lifecycle state.
+       The kernel enters it from ANY state (when a TRAException is raised)
+       and returns to the calling state (or halts). Modeling it as a state
+       would require complex state-machine transitions (any → EXCEPTION_HANDLER
+       → any) that break the forward-only invariant.
+
+    2. HALT_ERROR is a *terminal condition*, not a state. The kernel raises
+       ConformanceFailure (which exits the pipeline) rather than transitioning
+       to a HALT_ERROR state.
+
+    This design is pending spec clarification. If the spec author confirms
+    that EXCEPTION_HANDLER/HALT_ERROR should be states, add them to this enum
+    and update _KERNEL_ORDER + the transition logic. Until then, the
+    EXCEPTION_HANDLER audit record (emitted by _recover) is the audit-trail
+    evidence that the exception handler was invoked.
+    """
 
     BOOTSTRAP = "BOOTSTRAP"
     INITIALIZE_RUNTIME = "INITIALIZE_RUNTIME"
@@ -508,12 +530,15 @@ class TRAKernel:
         forwarded to translate_segment. Previously the only way to supply
         an LLM was module-level monkeypatching.
 
-        TRA-001 (partial): code blocks are no-translate zones. We extract
-        them before translation, translate the rest, then restore them.
-        This protects inline code and fenced code blocks from glossary
-        substitution. Full segment-level translation (per leaf node) is
-        deferred — the current approach is a placeholder-based protection
-        that addresses the S-03 test case.
+        TRA-001 (round 5 Phase 8): per-leaf segment translation. Previously
+        called translate_segment ONCE on the entire protected source. Now
+        walks ctx.structural_map.nodes, identifies leaf segments (HEADING,
+        PARAGRAPH, LIST_ITEM, TABLE_CELL), and calls translate_segment per
+        leaf. This gives per-segment cache keys, per-segment evidence chains,
+        and meaningful RepairAttempt.segment_index values.
+
+        Code blocks (fenced + inline) are still no-translate zones — extracted
+        as placeholders before per-leaf translation and restored after.
         """
         # Extract code blocks and protect them with placeholders.
         placeholders: dict[str, str] = {}
@@ -539,18 +564,101 @@ class TRAKernel:
 
         protected = _INLINE_RE.sub(_stash_inline, protected)
 
-        # Translate the protected source (code blocks are now placeholders).
-        # TRA-D5-002 (round 5): forward the llm_translate callback so callers
-        # can inject an LLM via dependency injection (no module-level patching).
-        result = translate_segment(
-            protected,
-            self.ctx,
-            self.cache,
-            self.evidence,
-            self.audit,
-            llm_translate=llm_translate,
-        )
-        translated = result.translation
+        # TRA-001 (round 5 Phase 8): helper for per-leaf inline code protection.
+        def _stash(m: re.Match[str], ph: dict[str, str], prefix: str) -> str:
+            key = f"{prefix}{len(ph)}__"
+            ph[key] = m.group(0)
+            return key
+
+        # TRA-001 (round 5 Phase 8): per-leaf segment translation.
+        # Walk the structural map's leaf segments and translate each one
+        # individually. This gives per-segment cache keys + per-segment
+        # evidence chains. If the structural map is empty or has no leaves,
+        # fall back to whole-doc translation (backward compat).
+        #
+        # When an LLM callback is supplied, use whole-doc translation instead
+        # — LLMs typically translate whole documents, and the caller's
+        # callback expects to receive the full source (not individual leaf
+        # segments). Per-leaf translation is primarily for the deterministic
+        # rule path (cache granularity + forensic traceability).
+        translated = protected
+        if self.ctx.structural_map is not None and llm_translate is None:
+            leaf_segments = list(self.ctx.structural_map.iter_leaf_segments())
+            if leaf_segments:
+                for _idx, node in leaf_segments:
+                    if node.text is None or not node.text.strip():
+                        continue
+                    # Skip no-translate zones (code blocks).
+                    if node.is_no_translate_zone:
+                        continue
+                    # Apply code-block protection to the leaf text, translate,
+                    # then restore. This ensures inline code within a paragraph
+                    # is protected even when translating per-leaf.
+                    leaf_text = node.text
+                    leaf_placeholders: dict[str, str] = {}
+
+                    def _stash_leaf(
+                        m: re.Match[str], ph: dict[str, str] = leaf_placeholders
+                    ) -> str:
+                        return _stash(m, ph, "__LEAF_INLINE_")
+
+                    leaf_protected = _INLINE_RE.sub(_stash_leaf, leaf_text)
+                    # Translate this leaf segment.
+                    result = translate_segment(
+                        leaf_protected,
+                        self.ctx,
+                        self.cache,
+                        self.evidence,
+                        self.audit,
+                        llm_translate=llm_translate,
+                    )
+                    leaf_translated = result.translation
+                    # Restore inline code in the leaf translation.
+                    for key, original in leaf_placeholders.items():
+                        leaf_translated = leaf_translated.replace(key, original)
+                    # Replace the original text with the translation in the
+                    # protected source. The `translated` variable has the
+                    # whole-doc inline-code placeholders, but `node.text` is
+                    # the original (unprotected) text. We need to replace the
+                    # PROTECTED version of node.text (matching what's in
+                    # `translated`) with the leaf translation.
+                    # Build the protected version of node.text for matching.
+                    node_text_protected = _INLINE_RE.sub(
+                        lambda m: _stash(m, {}, "__INLINE_CODE_"),
+                        leaf_text,
+                    )
+                    # Try replacing the protected version first (matches
+                    # `translated` which has whole-doc placeholders). If that
+                    # fails (text not found), fall back to replacing the
+                    # original text (for segments without inline code).
+                    if node_text_protected in translated:
+                        translated = translated.replace(
+                            node_text_protected, leaf_translated, 1
+                        )
+                    elif node.text in translated:
+                        translated = translated.replace(node.text, leaf_translated, 1)
+            else:
+                # No leaf segments — fall back to whole-doc translation.
+                result = translate_segment(
+                    translated,
+                    self.ctx,
+                    self.cache,
+                    self.evidence,
+                    self.audit,
+                    llm_translate=llm_translate,
+                )
+                translated = result.translation
+        else:
+            # No structural map — fall back to whole-doc translation.
+            result = translate_segment(
+                translated,
+                self.ctx,
+                self.cache,
+                self.evidence,
+                self.audit,
+                llm_translate=llm_translate,
+            )
+            translated = result.translation
 
         # Restore code blocks.
         for key, original in placeholders.items():

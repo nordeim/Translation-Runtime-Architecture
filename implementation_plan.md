@@ -343,7 +343,7 @@ File Structure Summary
   │   ├── test_isa.py 
   │   ├── test_kernel.py 
   │   ├── test_modules.py 
-  │   ├── test_outstanding_findings.py   # TDD regression tests (70 classes, 156 tests)
+  │   ├── test_outstanding_findings.py   # TDD regression tests (71 classes, 161 tests)
   │   ├── test_phase0.py 
   │   ├── test_phase6_hardening.py 
   │   ├── test_recovery.py 

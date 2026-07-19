@@ -5264,3 +5264,142 @@ class TestTypeSafety_RuleTranslateModuleParam:
                         return
                 raise AssertionError("module parameter not found in _rule_translate")
         raise AssertionError("_rule_translate function not found in isa.py")
+
+
+# ============================================================================
+# TRA-001 Phase 8: per-leaf segment translation (Round 5)
+# ============================================================================
+class TestTRA001_PerLeafSegmentTranslation:
+    """TRA-001 (partial → Phase 8): _execute_translation currently calls
+    translate_segment ONCE on the entire protected source. Spec §3
+    TRANSLATE_SEGMENT Inputs say "Source Segment" (leaf-level: sentence,
+    list item, table cell, heading).
+
+    Fix: walk ctx.structural_map.nodes, identify leaf segments, call
+    translate_segment per leaf, re-assemble via text replacement.
+
+    This gives:
+    - Per-segment cache keys (not per-document)
+    - Per-segment evidence chains (better L4 forensic trace)
+    - Meaningful RepairAttempt.segment_index (was always 0)
+    """
+
+    def test_structural_map_has_iter_leaf_segments_method(self) -> None:
+        """RED: StructuralMap should have an iter_leaf_segments() method
+        that yields (index, node) tuples for translatable leaf nodes."""
+        from tra.anchor import build_structural_map
+        from tra.memory import NodeKind
+
+        smap, _ = build_structural_map("# Heading\n\nParagraph.\n\n- Item 1\n")
+        assert hasattr(smap, "iter_leaf_segments"), (
+            "TRA-001: StructuralMap should have iter_leaf_segments() method"
+        )
+        leaves = list(smap.iter_leaf_segments())
+        assert len(leaves) >= 3, (
+            f"Expected >=3 leaf segments (heading + paragraph + list_item), "
+            f"got {len(leaves)}: {[(i, n.kind, n.text) for i, n in leaves]}"
+        )
+        # Each leaf should be a tuple of (index, StructuralNode).
+        for idx, node in leaves:
+            assert isinstance(idx, int)
+            assert node.kind in (
+                NodeKind.HEADING,
+                NodeKind.PARAGRAPH,
+                NodeKind.LIST_ITEM,
+                NodeKind.TABLE_CELL,
+            ), f"Unexpected leaf kind: {node.kind}"
+            assert node.text is not None, "Leaf text should not be None"
+
+    def test_per_leaf_translation_preserves_glossary_substitution(
+        self, kernel_config: BootstrapConfig
+    ) -> None:
+        """RED: When translated per-leaf, glossary substitution still works.
+        Source '成立' in a paragraph should become 'Confirmed' in the output."""
+        from tra.kernel import TRAKernel
+
+        cfg = kernel_config.model_copy(
+            update={"conformance_level": ConformanceLevel.L1_BASIC}
+        )
+        kernel = TRAKernel(cfg)
+        source = "# Test\n\nThe hypothesis 成立.\n"
+        target = kernel.run(source)
+        assert "Confirmed" in target, (
+            f"Per-leaf translation should apply glossary (成立 → Confirmed). "
+            f"Got: {target!r}"
+        )
+
+    def test_per_leaf_translation_preserves_entities(
+        self, kernel_config: BootstrapConfig
+    ) -> None:
+        """RED: When translated per-leaf, entities are preserved verbatim."""
+        from tra.kernel import TRAKernel
+
+        cfg = kernel_config.model_copy(
+            update={"conformance_level": ConformanceLevel.L1_BASIC}
+        )
+        kernel = TRAKernel(cfg)
+        source = "# Test\n\nRustVMM v0.5.0 released.\n"
+        target = kernel.run(source)
+        assert "RustVMM" in target, "Entity RustVMM should be preserved"
+        assert "v0.5.0" in target, "Version v0.5.0 should be preserved"
+
+    def test_per_leaf_translation_cache_key_differs_per_segment(
+        self, kernel_config: BootstrapConfig
+    ) -> None:
+        """RED: Per-leaf translation should produce per-segment cache keys
+        (not one per-document cache key). Verify by checking that the audit
+        trail has multiple TRANSLATE_SEGMENT records (one per leaf)."""
+        import json
+        import os
+        import tempfile
+
+        from tra.kernel import TRAKernel
+
+        audit_fd, audit_path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(audit_fd)
+        os.unlink(audit_path)
+        cfg = kernel_config.model_copy(
+            update={
+                "conformance_level": ConformanceLevel.L1_BASIC,
+                "audit_trace": audit_path,
+            }
+        )
+        kernel = TRAKernel(cfg)
+        # Source with multiple leaf segments (heading + 2 paragraphs).
+        source = "# Heading\n\nFirst paragraph.\n\nSecond paragraph.\n"
+        kernel.run(source)
+        with open(audit_path) as f:
+            records = [json.loads(line) for line in f]
+        os.unlink(audit_path)
+        translate_records = [
+            r for r in records if r.get("isa_instruction") == "TRANSLATE_SEGMENT"
+        ]
+        # With per-leaf translation, there should be multiple TRANSLATE_SEGMENT
+        # records (one per leaf segment). With whole-doc, there's only 1.
+        assert len(translate_records) >= 2, (
+            f"TRA-001: per-leaf translation should produce >=2 TRANSLATE_SEGMENT "
+            f"records (heading + 2 paragraphs), got {len(translate_records)}. "
+            f"All records: {[r.get('isa_instruction') for r in records]}"
+        )
+
+    def test_per_leaf_translation_preserves_code_blocks(
+        self, kernel_config: BootstrapConfig
+    ) -> None:
+        """SANITY: Code blocks (fenced + inline) are still protected from
+        glossary substitution under per-leaf translation."""
+        from tra.kernel import TRAKernel
+
+        cfg = kernel_config.model_copy(
+            update={"conformance_level": ConformanceLevel.L1_BASIC}
+        )
+        kernel = TRAKernel(cfg)
+        # Inline code with a CJK term that's in the glossary.
+        source = "# Test\n\nUse `执行环境` in code but 执行环境 in prose.\n"
+        target = kernel.run(source)
+        # The inline code should NOT be translated; prose should.
+        assert "`执行环境`" in target, (
+            f"Inline code should be protected from translation. Got: {target!r}"
+        )
+        assert "execution environment" in target, (
+            f"Prose should be translated. Got: {target!r}"
+        )
