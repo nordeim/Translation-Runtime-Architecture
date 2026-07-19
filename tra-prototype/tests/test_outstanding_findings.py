@@ -3588,3 +3588,247 @@ class TestTRA072UniversalPolicyArbitration:
                 f"TRA-072: epistemic diagnostic should be WARNING when "
                 f"resolver returns False, got {d.severity}. Issue: {d.issue}"
             )
+
+
+# ============================================================================
+# TRA-A5-014: dead `forbidden_mappings` field on RuntimeContext (Round 5)
+# ============================================================================
+class TestTRA_A5_014_ForbiddenMappingsDeadFieldRemoved:
+    """TRA-A5-014: `RuntimeContext.forbidden_mappings` was defined but never
+    populated or read anywhere in `tra/`. `_forbidden_from_module(ctx)` reads
+    from `ctx.module.get_glossary_mappings()` instead. The field is dead
+    weight on the Pydantic model — remove it.
+    """
+
+    def test_forbidden_mappings_field_removed_from_runtime_context(self) -> None:
+        """RED: Assert the field is no longer on RuntimeContext."""
+        from tra.memory import RuntimeContext
+
+        ctx = RuntimeContext()
+        assert not hasattr(ctx, "forbidden_mappings"), (
+            "TRA-A5-014: RuntimeContext.forbidden_mappings should be removed "
+            "(dead field — never populated or read in tra/)."
+        )
+
+    def test_no_references_to_forbidden_mappings_in_source(self) -> None:
+        """RED: Assert no source file references the field name."""
+        import subprocess
+
+        result = subprocess.run(
+            ["rg", "-n", "forbidden_mappings", "tra/"],
+            capture_output=True,
+            text=True,
+            cwd="/home/z/my-project/Translation-Runtime-Architecture/tra-prototype",
+        )
+        # rg returns 1 when no matches found — that's what we want
+        assert result.returncode == 1, (
+            f"TRA-A5-014: forbidden_mappings still referenced in tra/:\n{result.stdout}"
+        )
+
+
+# ============================================================================
+# TRA-B5-009: registry: object | None should be ModuleRegistry | None (Round 5)
+# ============================================================================
+class TestTRA_B5_009_RegistryTypedAsModuleRegistry:
+    """TRA-B5-009: `TRAKernel.__init__(registry: object | None)` and
+    `_select_module(registry: object | None)` use the wrong type annotation.
+    The proper type is `ModuleRegistry | None`. The `# type: ignore[attr-defined]`
+    at kernel.py:171 is a symptom of this — once properly typed, the ignore
+    can be removed.
+    """
+
+    def test_registry_parameter_typed_as_module_registry(self) -> None:
+        """RED: Assert TRAKernel.__init__'s registry parameter is typed
+        ModuleRegistry | None, not object | None."""
+        import inspect
+
+        from tra.kernel import TRAKernel
+
+        sig = inspect.signature(TRAKernel.__init__)
+        registry_param = sig.parameters.get("registry")
+        assert registry_param is not None, (
+            "TRAKernel.__init__ must have a registry parameter"
+        )
+        annotation_str = str(registry_param.annotation)
+        assert "ModuleRegistry" in annotation_str, (
+            f"TRA-B5-009: registry parameter should be typed ModuleRegistry | None, "
+            f"got {annotation_str}"
+        )
+        assert (
+            "object" not in annotation_str.lower() or "ModuleRegistry" in annotation_str
+        ), (
+            f"TRA-B5-009: registry parameter should not be typed as bare 'object', "
+            f"got {annotation_str}"
+        )
+
+    def test_no_type_ignore_for_registry_all_call(self) -> None:
+        """RED: Assert the `# type: ignore[attr-defined]` on
+        `registry.all()` is removed (it's needed only because of the
+        bare `object` type)."""
+        import subprocess
+
+        result = subprocess.run(
+            ["rg", "-n", "registry.all\\(\\).*type: ignore", "tra/kernel.py"],
+            capture_output=True,
+            text=True,
+            cwd="/home/z/my-project/Translation-Runtime-Architecture/tra-prototype",
+        )
+        assert result.returncode == 1, (
+            f"TRA-B5-009: stale `# type: ignore[attr-defined]` on registry.all() "
+            f"still present:\n{result.stdout}"
+        )
+
+
+# ============================================================================
+# TRA-B5-010: _collect_headings(nodes: list[Any]) -> list[StructuralNode] (R5)
+# ============================================================================
+class TestTRA_B5_010_CollectHeadingsTypedAsStructuralNode:
+    """TRA-B5-010: `kernel.py:393` types `nodes: list[Any]` for the
+    `_collect_headings` closure. The proper type is `list[StructuralNode]`
+    (the type of `StructuralMap.nodes`).
+    """
+
+    def test_collect_headings_typed_as_structural_node(self) -> None:
+        """RED: Assert _collect_headings parameter is typed list[StructuralNode]."""
+        import ast
+        from pathlib import Path
+
+        kernel_src = Path(
+            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/kernel.py"
+        ).read_text()
+        tree = ast.parse(kernel_src)
+        # Find _collect_headings function def
+        found = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_collect_headings":
+                found = True
+                # Get the first argument's annotation source
+                arg = node.args.args[0]
+                annotation = ast.unparse(arg.annotation)
+                assert "StructuralNode" in annotation, (
+                    f"TRA-B5-010: _collect_headings parameter should be typed "
+                    f"list[StructuralNode], got {annotation}"
+                )
+                assert "Any" not in annotation, (
+                    f"TRA-B5-010: _collect_headings parameter should not be "
+                    f"list[Any], got {annotation}"
+                )
+        assert found, "_collect_headings function not found in kernel.py"
+
+
+# ============================================================================
+# TRA-B5-011: stale `# type: ignore[arg-type]` in test_recovery.py (Round 5)
+# ============================================================================
+class TestTRA_B5_011_StaleTypeIgnoreInTestRecovery:
+    """TRA-B5-011: `tests/test_recovery.py:95` has a stale
+    `# type: ignore[arg-type]` on `route_exception(BrokenMarkdown(), amb)`.
+    BrokenMarkdown is a TRAException subclass; route_exception accepts
+    TRAException. The ignore is no longer needed (was likely added when
+    BrokenMarkdown had a different signature). mypy --strict passes without it.
+    """
+
+    def test_no_stale_type_ignore_in_test_recovery(self) -> None:
+        """RED: Assert no `# type: ignore` comments remain in test_recovery.py."""
+        import subprocess
+
+        result = subprocess.run(
+            ["rg", "-n", "type: ignore", "tests/test_recovery.py"],
+            capture_output=True,
+            text=True,
+            cwd="/home/z/my-project/Translation-Runtime-Architecture/tra-prototype",
+        )
+        assert result.returncode == 1, (
+            f"TRA-B5-011: stale `# type: ignore` in test_recovery.py:\n{result.stdout}"
+        )
+
+
+# ============================================================================
+# TRA-F5-011: register() should reject language module with no direction (R5)
+# ============================================================================
+class TestTRA_F5_011_RegisterRejectsLanguageModuleWithoutDirection:
+    """TRA-F5-011: `register()` accepts a `kind="language"` ModuleInterface
+    with no `metadata.direction`, leaving it silently unreachable.
+    `_select_module` filters by direction, so such a module is invisible.
+    Surface the error at registration time with an actionable message.
+    """
+
+    def test_register_rejects_language_module_without_direction(self) -> None:
+        """RED: Assert register() raises ValueError for a language module
+        with no metadata.direction."""
+        from tra.modules.registry import ModuleInterface, ModuleRegistry
+        from tra.modules.zh_en import ZHENModule
+
+        # Build a stub language module with NO direction in metadata.
+        zhen = ZHENModule()
+        # Valid style_profile so we pass TRA-F4-006.
+        stub = ModuleInterface(
+            name="stub-no-direction",
+            kind="language",
+            get_glossary_mappings=zhen.get_glossary_mappings,
+            get_style_profile=zhen.get_style_profile,
+            apply_rules=zhen.apply_rules,
+            is_forbidden=zhen.is_forbidden,
+            get_forbidden_targets=zhen.get_forbidden_targets,
+            entity_type_hint=zhen.entity_type_hint,
+            apply_zh_rules=zhen.apply_zh_rules,
+            metadata={},  # ← no "direction" key
+        )
+        registry = ModuleRegistry()
+        with pytest.raises(ValueError, match="direction"):
+            registry.register(stub)
+
+    def test_register_accepts_language_module_with_direction(self) -> None:
+        """SANITY: Assert register() still works for a properly-configured
+        language module."""
+        from tra.modules.registry import build_default_registry
+
+        registry = build_default_registry()
+        # ZH-EN should be registered by default.
+        assert any(
+            mod.kind == "language" and mod.metadata.get("direction")
+            for mod in registry.all()
+        ), (
+            "build_default_registry should register at least one "
+            "language module with a direction"
+        )
+
+
+# ============================================================================
+# TRA-F5-010: _normalize_language_pair should reject malformed --lang (R5)
+# ============================================================================
+class TestTRA_F5_010_NormalizeLanguagePairRejectsMalformed:
+    """TRA-F5-010: `_normalize_language_pair` silently upper-cases
+    malformed `--lang` values (e.g. `fr` → `FR`), which then silently fall
+    back to ZHENModule because no `FR` module is registered. This is a UX
+    regression introduced by the TRA-099 fix.
+
+    Fix: when `--lang` doesn't match `<source>-<target>` or
+    `<source> -> <target>`, raise ValueError with an actionable message.
+    """
+
+    def test_rejects_no_separator(self) -> None:
+        """RED: 'fr' (no separator) should raise ValueError."""
+        from tra_cli import _normalize_language_pair
+
+        with pytest.raises(ValueError, match=r"(?i)language pair"):
+            _normalize_language_pair("fr")
+
+    def test_rejects_empty_string(self) -> None:
+        """RED: '' should raise ValueError."""
+        from tra_cli import _normalize_language_pair
+
+        with pytest.raises(ValueError, match=r"(?i)language pair"):
+            _normalize_language_pair("")
+
+    def test_accepts_hyphen_form(self) -> None:
+        """SANITY: 'zh-en' should normalize to 'ZH -> EN'."""
+        from tra_cli import _normalize_language_pair
+
+        assert _normalize_language_pair("zh-en") == "ZH -> EN"
+
+    def test_accepts_canonical_form(self) -> None:
+        """SANITY: 'ZH -> EN' should pass through (normalized)."""
+        from tra_cli import _normalize_language_pair
+
+        assert _normalize_language_pair("ZH -> EN") == "ZH -> EN"
+        assert _normalize_language_pair("zh -> en") == "ZH -> EN"

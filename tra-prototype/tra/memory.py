@@ -200,7 +200,6 @@ class RuntimeContext(BaseModel):
     configuration: dict[str, Any] = Field(default_factory=dict)
     document_profile: DocumentProfile | None = None
     glossary_cache: list[GlossaryEntry] = Field(default_factory=list)
-    forbidden_mappings: list[ForbiddenMapping] = Field(default_factory=list)
     entity_table: list[Entity] = Field(default_factory=list)
     style_profile: StyleProfile = Field(default_factory=StyleProfile)
     structural_map: StructuralMap | None = None

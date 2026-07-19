@@ -55,18 +55,45 @@ def _normalize_language_pair(value: str) -> str:
     'ZH -> EN' (canonical arrow form). The kernel's _select_module compares
     the language_pair against module direction metadata (canonical form),
     so we normalize hyphens to ' -> ' to ensure the match works.
+
+    TRA-F5-010 (round 5): previously, a malformed value like `fr` (no
+    separator) was silently upper-cased to `FR` and then fell back to
+    ZHENModule because no `FR` module was registered. Now we raise
+    ValueError with an actionable message.
     """
     v = value.strip()
+    if not v:
+        raise ValueError(
+            "Language pair is empty. Expected '<source>-<target>' "
+            "(e.g. 'zh-en') or '<source> -> <target>' (e.g. 'ZH -> EN')."
+        )
     if "->" in v:
         # Already canonical form; just normalize spacing/case.
         src, _, tgt = v.partition("->")
-        return f"{src.strip().upper()} -> {tgt.strip().upper()}"
+        src, tgt = src.strip(), tgt.strip()
+        if not src or not tgt:
+            raise ValueError(
+                f"Language pair {value!r} is malformed: expected "
+                f"'<source> -> <target>' (e.g. 'ZH -> EN')."
+            )
+        return f"{src.upper()} -> {tgt.upper()}"
     # Hyphen form: 'zh-en' → 'ZH -> EN'
     if "-" in v:
         src, _, tgt = v.rpartition("-")
-        return f"{src.strip().upper()} -> {tgt.strip().upper()}"
-    # No separator; return as-is (will likely fail later).
-    return v.upper()
+        src, tgt = src.strip(), tgt.strip()
+        if not src or not tgt:
+            raise ValueError(
+                f"Language pair {value!r} is malformed: expected "
+                f"'<source>-<target>' (e.g. 'zh-en')."
+            )
+        return f"{src.upper()} -> {tgt.upper()}"
+    # No separator (e.g. 'fr'): reject rather than silently fall back.
+    raise ValueError(
+        f"Language pair {value!r} is malformed: expected '<source>-<target>' "
+        f"(e.g. 'zh-en') or '<source> -> <target>' (e.g. 'ZH -> EN'). "
+        f"Without a separator, the kernel would silently fall back to the "
+        f"default ZH-EN module, masking the user's intent."
+    )
 
 
 @click.group()

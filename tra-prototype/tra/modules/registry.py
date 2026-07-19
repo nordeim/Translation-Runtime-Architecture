@@ -103,17 +103,28 @@ class ModuleRegistry:
                 f"Use unregister() first if you intend to replace it."
             )
         # TRA-098: detect conflicting direction for language modules.
+        # TRA-F5-011 (round 5): require non-empty direction for language
+        # modules. Without it, _select_module silently never matches the
+        # module, leaving it unreachable. Surface the error here with an
+        # actionable message.
         if module.kind == "language":
-            direction = str(module.metadata.get("direction", ""))
-            if direction and direction in self._directions:
+            direction = str(module.metadata.get("direction", "")).strip()
+            if not direction:
+                raise ValueError(
+                    f"Language module '{module.name}' has no metadata.direction. "
+                    f"A language module must declare its direction "
+                    f"(e.g. metadata={{'direction': 'ZH -> EN'}}) so the "
+                    f"kernel's _select_module can dispatch it. Without a "
+                    f"direction, the module is silently unreachable."
+                )
+            if direction in self._directions:
                 existing = self._directions[direction]
                 raise ValueError(
                     f"Direction conflict: module '{module.name}' has direction "
                     f"'{direction}' which is already registered by module "
                     f"'{existing}'. Only one module per direction is allowed."
                 )
-            if direction:
-                self._directions[direction] = module.name
+            self._directions[direction] = module.name
         self._modules[module.name] = module
 
     def unregister(self, name: str) -> None:

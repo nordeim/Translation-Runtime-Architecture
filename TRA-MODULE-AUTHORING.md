@@ -25,15 +25,29 @@ Every module satisfies the `LanguageModuleProtocol` defined in
 `tra/modules/base.py`:
 
 ```python
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
 class LanguageModuleProtocol(Protocol):
+    # Module metadata (used by the registry for dispatch).
+    name: str
+    kind: str  # "language" | "domain" | "formatting"
+
     def get_glossary_mappings(self) -> dict[str, str]: ...
-    def get_style_profile(self) -> StyleProfile: ...
-    def apply_rules(self, source: str, direction: str) -> str: ...
+    def get_style_profile(self) -> object: ...
     def is_forbidden(self, source: str, target: str) -> bool: ...
     def get_forbidden_targets(self) -> dict[str, str]: ...
-    def entity_type_hint(self, token: str) -> EntityType | None: ...
-    def apply_zh_rules(self, source: str) -> str: ...
+    def entity_type_hint(self, token: str) -> object | None: ...
+    def apply_zh_rules(self, text: str) -> str: ...
+    def apply_rules(self, source: str, direction: str) -> str: ...
 ```
+
+> **Note on `-> object` return types:** The Protocol uses `-> object`
+> (not `-> StyleProfile` or `-> EntityType`) because Protocols cannot
+> reference Pydantic models defined in a different module without
+> creating a circular import. `ModuleRegistry.register()` validates the
+> actual return shape at registration time.
 
 The `ModuleInterface` dataclass in `tra/modules/registry.py` is a
 runtime wrapper that carries these as `Callable` fields. Use
@@ -78,6 +92,13 @@ model with fields: `voice`, `sentence_complexity`, `epistemic_mapping`,
 registration time and raises a clear `TypeError` if it's `None`. An
 opaque Pydantic `ValidationError` from `RuntimeContext` construction
 is the symptom of a `None` return.
+
+**Note (TRA-F5-012)**: returning a `dict` instead of a `StyleProfile`
+instance is accepted — Pydantic coerces the dict to a `StyleProfile`
+during `RuntimeContext` construction. However, returning a
+`StyleProfile` instance is preferred for type safety and to surface
+field-level validation errors at the module boundary rather than at
+`RuntimeContext` construction.
 
 **Example**:
 ```python

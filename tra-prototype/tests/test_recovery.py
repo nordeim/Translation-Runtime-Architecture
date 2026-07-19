@@ -92,7 +92,7 @@ def test_route_exception_dispatches_each_type():
 
 def test_route_exception_falls_back_for_unknown():
     amb: list[str] = []
-    rep = route_exception(BrokenMarkdown(), amb)  # type: ignore[arg-type]
+    rep = route_exception(BrokenMarkdown(), amb)
     assert isinstance(rep, RecoveryReport)
 
 

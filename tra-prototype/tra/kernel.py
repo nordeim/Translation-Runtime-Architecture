@@ -41,7 +41,9 @@ from .memory import (
     RuntimeContext,
     Severity,
     StructuralMap,
+    StructuralNode,
 )
+from .modules.registry import ModuleRegistry
 from .modules.zh_en import ZHENModule
 from .recovery import route_exception
 
@@ -108,7 +110,7 @@ class TRAKernel:
         *,
         interactive: bool = False,
         deterministic: bool = True,
-        registry: object | None = None,
+        registry: ModuleRegistry | None = None,
     ) -> None:
         """Initialize the kernel.
 
@@ -147,7 +149,7 @@ class TRAKernel:
         self.state = KernelState.BOOTSTRAP
 
     @staticmethod
-    def _select_module(language_pair: str, registry: object | None) -> Any:
+    def _select_module(language_pair: str, registry: ModuleRegistry | None) -> Any:
         """Select the language module for the configured pair (TRA-002).
 
         If a registry is supplied, prefer a FULL direction match (e.g.
@@ -168,7 +170,7 @@ class TRAKernel:
             )
             # Pass 1: prefer a full-direction match.
             source_only_match: Any = None
-            for mod in registry.all():  # type: ignore[attr-defined]
+            for mod in registry.all():
                 if getattr(mod, "kind", "") != "language":
                     continue
                 mod_direction = str(getattr(mod, "metadata", {}).get("direction", ""))
@@ -389,7 +391,7 @@ class TRAKernel:
         # Pass 2: bind translated heading slugs and call rewrite_links.
         source_headings: list[str] = []
 
-        def _collect_headings(nodes: list[Any]) -> None:
+        def _collect_headings(nodes: list[StructuralNode]) -> None:
             for node in nodes:
                 if node.kind.value == "heading" and node.text:
                     source_headings.append(node.text)
