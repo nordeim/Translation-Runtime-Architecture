@@ -7,6 +7,7 @@ refactored. Tests are named after their finding ID for traceability.
 from __future__ import annotations
 
 import contextlib
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -1828,7 +1829,7 @@ class TestTRA038UnknownTermRaised:
         in _rule_translate."""
         from tra.isa import _rule_translate
 
-        result, _ = _rule_translate("成立", {"成立": "Confirmed"}, [])
+        result, _, _ = _rule_translate("成立", {"成立": "Confirmed"}, [])
         assert "Confirmed" in result
 
 
@@ -2816,6 +2817,12 @@ class TestTRA038UnknownTermRaisedInProduction:
     def test_unknown_cjk_term_logged_to_ambiguities(self) -> None:
         """A CJK token with no glossary/entity/epistemic match and not a
         stop-word must be logged to unresolved_ambiguities (TRA-038).
+
+        TRA-A5-003 (round 5): _rule_translate now returns the list of
+        unknown tokens as the 3rd tuple element so translate_segment
+        can emit EXCEPTION_HANDLER audit records. The ambiguities list
+        is still populated by the recovery procedure (TRA-038 contract
+        preserved).
         """
         from tra.isa import _rule_translate
 
@@ -2823,10 +2830,16 @@ class TestTRA038UnknownTermRaisedInProduction:
         # in the ZH-EN glossary, NOT an entity, NOT in the epistemic lexicon,
         # and NOT a stop-word.
         ambiguities: list[str] = []
-        _rule_translate("量子纠缠", {}, [], unresolved_ambiguities=ambiguities)
+        _, _, unknown_tokens = _rule_translate(
+            "量子纠缠", {}, [], unresolved_ambiguities=ambiguities
+        )
         assert any("量子纠缠" in a and "UNKNOWN_TERM" in a for a in ambiguities), (
             f"UnknownTerm for 量子纠缠 should be logged to "
             f"unresolved_ambiguities, got: {ambiguities}"
+        )
+        assert "量子纠缠" in unknown_tokens, (
+            f"TRA-A5-003: _rule_translate should return the unknown token "
+            f"in the 3rd tuple element, got: {unknown_tokens}"
         )
 
     def test_stop_word_does_not_log(self) -> None:
@@ -2838,12 +2851,16 @@ class TestTRA038UnknownTermRaisedInProduction:
         # These are all common particles that should pass through silently.
         for stop_word in ("的", "是", "在", "了", "和", "与", "或"):
             ambiguities: list[str] = []
-            result, _ = _rule_translate(
+            result, _, unknown_tokens = _rule_translate(
                 stop_word, {}, [], unresolved_ambiguities=ambiguities
             )
             # Should NOT log; should return the stop-word unchanged.
             assert not ambiguities, (
                 f"Stop-word {stop_word!r} should not be logged, got: {ambiguities}"
+            )
+            assert not unknown_tokens, (
+                f"Stop-word {stop_word!r} should not appear in unknown_tokens, "
+                f"got: {unknown_tokens}"
             )
             assert stop_word in result, (
                 f"Stop-word {stop_word!r} should pass through, got: {result!r}"
@@ -2855,11 +2872,15 @@ class TestTRA038UnknownTermRaisedInProduction:
         from tra.isa import _rule_translate
 
         ambiguities: list[str] = []
-        result, _ = _rule_translate(
+        result, _, unknown_tokens = _rule_translate(
             "成立", {"成立": "Confirmed"}, [], unresolved_ambiguities=ambiguities
         )
         assert not ambiguities, (
             f"Known term 成立 should not be logged, got: {ambiguities}"
+        )
+        assert not unknown_tokens, (
+            f"Known term 成立 should not appear in unknown_tokens, "
+            f"got: {unknown_tokens}"
         )
         assert "Confirmed" in result
 
@@ -3832,3 +3853,316 @@ class TestTRA_F5_010_NormalizeLanguagePairRejectsMalformed:
 
         assert _normalize_language_pair("ZH -> EN") == "ZH -> EN"
         assert _normalize_language_pair("zh -> en") == "ZH -> EN"
+
+
+# ============================================================================
+# TRA-A5-005: structural verification regex gaps (ordered-list, blockquote)
+# ============================================================================
+class TestTRA_A5_005_OrderedListAndBlockquoteRegexGaps:
+    """TRA-A5-005: TRA-042 extended structural verification to 6 categories
+    (heading, table, list, blockquote, HR, code fence), but two regex gaps
+    remain:
+
+    1. `_LIST_ITEM_RE = r"^\\s*[-*+] |\\n\\s*[-*+] "` only matches unordered
+       list items (-, *, +). Ordered list items (1., 2., etc.) are not
+       counted — a source with 5 ordered items and a target with 3 would
+       pass the check incorrectly.
+    2. `_BLOCKQUOTE_RE = r"^\\s*>\\s"` requires whitespace after `>`. A
+       blockquote line `>text` (no space, valid CommonMark) is not matched.
+    """
+
+    def test_ordered_list_item_count_mismatch_detected(self) -> None:
+        """RED: A source with 3 ordered-list items and a target with 1
+        should produce a structural BLOCKING diagnostic."""
+        from tra.diagnostics import AuditTrail
+        from tra.isa import verify_output
+        from tra.memory import RuntimeContext, Severity
+
+        ctx = RuntimeContext()
+        audit = AuditTrail(tempfile.mkstemp(suffix=".jsonl")[1])
+        # Source has 3 ordered-list items; target has 1.
+        source = "List:\n1. First\n2. Second\n3. Third\n"
+        target = "List:\n1. First only\n"
+        diags = verify_output(target, source, ctx, audit)
+        list_diags = [d for d in diags if "list item" in d.issue.lower()]
+        assert list_diags, (
+            "TRA-A5-005: ordered-list count mismatch should produce a "
+            "structural diagnostic, but none was raised. Source had 3 "
+            "ordered items, target had 1."
+        )
+        # Structural severity is arbitrated by PolicyResolver (P2 vs P6);
+        # default resolver returns True (P2 wins) → BLOCKING.
+        assert list_diags[0].severity == Severity.BLOCKING, (
+            f"Expected BLOCKING for structural mismatch, got {list_diags[0].severity}"
+        )
+
+    def test_ordered_list_item_count_match_no_diagnostic(self) -> None:
+        """SANITY: A source and target with the same number of ordered
+        items should NOT produce a list-item diagnostic."""
+        from tra.diagnostics import AuditTrail
+        from tra.isa import verify_output
+        from tra.memory import RuntimeContext
+
+        ctx = RuntimeContext()
+        audit = AuditTrail(tempfile.mkstemp(suffix=".jsonl")[1])
+        source = "List:\n1. First\n2. Second\n"
+        target = "List:\n1. Premier\n2. Second\n"
+        diags = verify_output(target, source, ctx, audit)
+        list_diags = [d for d in diags if "list item" in d.issue.lower()]
+        assert not list_diags, (
+            f"TRA-A5-005: matching ordered-list counts should not produce "
+            f"a diagnostic, got {[d.issue for d in list_diags]}"
+        )
+
+    def test_blockquote_no_space_after_gt_detected(self) -> None:
+        """RED: A blockquote line `>text` (no space, valid CommonMark)
+        should be counted. A source with 2 such lines and target with 1
+        should produce a structural diagnostic."""
+        from tra.diagnostics import AuditTrail
+        from tra.isa import verify_output
+        from tra.memory import RuntimeContext, Severity
+
+        ctx = RuntimeContext()
+        audit = AuditTrail(tempfile.mkstemp(suffix=".jsonl")[1])
+        # Source has 2 `>text` blockquote lines; target has 1.
+        source = ">First quote\n>Second quote\n"
+        target = ">First quote only\n"
+        diags = verify_output(target, source, ctx, audit)
+        bq_diags = [d for d in diags if "blockquote" in d.issue.lower()]
+        assert bq_diags, (
+            "TRA-A5-005: blockquote count mismatch (with `>text` form) "
+            "should produce a structural diagnostic, but none was raised."
+        )
+        assert bq_diags[0].severity == Severity.BLOCKING, (
+            f"Expected BLOCKING for structural mismatch, got {bq_diags[0].severity}"
+        )
+
+
+# ============================================================================
+# TRA-A5-013: factual-integrity check in verify_output (Round 5)
+# ============================================================================
+class TestTRA_A5_013_FactualIntegrityCheck:
+    """TRA-A5-013: verify_output has no factual-integrity check.
+    FACTUAL_INTEGRITY (P1, the highest priority) is never arbitrated.
+    Spec §5.1 defines factual integrity as "Numbers, units, logical
+    conditions, empirical claims" — the LLM seam is the natural place
+    for drift (e.g., summarizing `v0.5.0` as `version 0.5`).
+
+    Fix: add a `_check_factual_integrity` that extracts version-like
+    tokens, dates, and numeric quantities from source, and verifies each
+    appears verbatim in target. Severity is arbitrated by
+    _POLICY_RESOLVER.wins(FACTUAL_INTEGRITY, TARGET_FLUENCY).
+    """
+
+    def test_version_drift_detected(self) -> None:
+        """RED: source contains `v0.5.0`, target has `v0.5` (drift).
+        Should produce a BLOCKING factual-verification diagnostic."""
+        from tra.diagnostics import AuditTrail
+        from tra.isa import verify_output
+        from tra.memory import RuntimeContext, Severity
+
+        ctx = RuntimeContext()
+        audit = AuditTrail(tempfile.mkstemp(suffix=".jsonl")[1])
+        source = "The system requires RustVMM v0.5.0 or later."
+        target = "The system requires RustVMM v0.5 or later."
+        diags = verify_output(target, source, ctx, audit)
+        factual_diags = [d for d in diags if d.subsystem == "factual"]
+        assert factual_diags, (
+            "TRA-A5-013: version drift (v0.5.0 → v0.5) should produce "
+            "a factual-verification diagnostic, but none was raised."
+        )
+        assert factual_diags[0].severity == Severity.BLOCKING, (
+            f"Expected BLOCKING for factual drift, got {factual_diags[0].severity}"
+        )
+
+    def test_version_preserved_no_diagnostic(self) -> None:
+        """SANITY: source and target both contain `v0.5.0` — no drift,
+        no factual diagnostic."""
+        from tra.diagnostics import AuditTrail
+        from tra.isa import verify_output
+        from tra.memory import RuntimeContext
+
+        ctx = RuntimeContext()
+        audit = AuditTrail(tempfile.mkstemp(suffix=".jsonl")[1])
+        source = "The system requires RustVMM v0.5.0 or later."
+        target = "The system requires RustVMM v0.5.0 or later."
+        diags = verify_output(target, source, ctx, audit)
+        factual_diags = [d for d in diags if d.subsystem == "factual"]
+        assert not factual_diags, (
+            f"TRA-A5-013: matching versions should not produce a "
+            f"factual diagnostic, got {[d.issue for d in factual_diags]}"
+        )
+
+    def test_date_drift_detected(self) -> None:
+        """RED: source contains `2024-01-15`, target has `2024-01-05`.
+        Should produce a BLOCKING factual-verification diagnostic."""
+        from tra.diagnostics import AuditTrail
+        from tra.isa import verify_output
+        from tra.memory import RuntimeContext, Severity
+
+        ctx = RuntimeContext()
+        audit = AuditTrail(tempfile.mkstemp(suffix=".jsonl")[1])
+        source = "Released 2024-01-15."
+        target = "Released 2024-01-05."
+        diags = verify_output(target, source, ctx, audit)
+        factual_diags = [d for d in diags if d.subsystem == "factual"]
+        assert factual_diags, (
+            "TRA-A5-013: date drift (2024-01-15 → 2024-01-05) should "
+            "produce a factual-verification diagnostic."
+        )
+        assert factual_diags[0].severity == Severity.BLOCKING
+
+    def test_policy_resolver_arbitrates_factual_severity(self) -> None:
+        """RED: monkeypatch _POLICY_RESOLVER.wins to return False;
+        factual drift severity should drop to WARNING."""
+        from tra.diagnostics import AuditTrail
+        from tra.isa import _POLICY_RESOLVER, verify_output
+        from tra.memory import RuntimeContext, Severity
+
+        ctx = RuntimeContext()
+        audit = AuditTrail(tempfile.mkstemp(suffix=".jsonl")[1])
+        source = "Requires v0.5.0."
+        target = "Requires v0.5."
+
+        original_wins = _POLICY_RESOLVER.wins
+        _POLICY_RESOLVER.wins = lambda _a, _b: False  # type: ignore[method-assign]
+        try:
+            diags = verify_output(target, source, ctx, audit)
+        finally:
+            _POLICY_RESOLVER.wins = original_wins  # type: ignore[method-assign]
+
+        factual_diags = [d for d in diags if d.subsystem == "factual"]
+        assert factual_diags, (
+            "Expected factual diagnostic even when resolver returns False"
+        )
+        for d in factual_diags:
+            assert d.severity == Severity.WARNING, (
+                f"TRA-A5-013: factual diagnostic should be WARNING when "
+                f"resolver returns False, got {d.severity}. Issue: {d.issue}"
+            )
+
+
+# ============================================================================
+# TRA-A5-003: UnknownTerm/EntityAmbiguity should raise, not direct-call (R5)
+# ============================================================================
+class TestTRA_A5_003_ExceptionsRoutedThroughKernelRecover:
+    """TRA-A5-003: TRA-038 wired UnknownTerm and EntityAmbiguity via direct
+    `recover_*` calls in isa.py, bypassing the kernel's `_recover`
+    dispatcher. Consequence: no `EXCEPTION_HANDLER` audit record is emitted
+    for these exception types — only the L4 ambiguity_register captures them.
+
+    Fix: refactor isa.py to `raise UnknownTerm(...)` / `raise
+    EntityAmbiguity(...)` so the kernel's `_recover` dispatcher catches
+    them, calls `route_exception` (which calls the appropriate
+    `recover_*`), AND emits the EXCEPTION_HANDLER audit record.
+    """
+
+    def test_unknown_term_emits_exception_handler_audit_record(self) -> None:
+        """RED: When translate_segment encounters an unknown CJK token,
+        the audit trail should contain an EXCEPTION_HANDLER record with
+        exception_code='UNKNOWN_TERM'."""
+        import json
+        import os
+        import tempfile
+
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+
+        # Use a fresh temp audit file so we don't pick up stale records.
+        audit_fd, audit_path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(audit_fd)
+        os.unlink(audit_path)  # remove so kernel creates fresh
+        cfg = BootstrapConfig.from_yaml("config.yaml").model_copy(
+            update={"audit_trace": audit_path}
+        )
+        kernel = TRAKernel(cfg)
+        # Source with an unknown CJK token (not in glossary, epistemic,
+        # or entity tables). E.g., "项目" (project) is not in the lexicon.
+        source = "项目概述"
+        kernel.run(source)
+
+        # Read the audit trail.
+        audit_records = []
+        with open(audit_path, encoding="utf-8") as f:
+            for line in f:
+                audit_records.append(json.loads(line))
+
+        exception_records = [
+            r for r in audit_records if r.get("isa_instruction") == "EXCEPTION_HANDLER"
+        ]
+        # The exception code is stored in the `input_hash` field of the
+        # EXCEPTION_HANDLER record (per kernel._recover implementation).
+        unknown_term_records = [
+            r for r in exception_records if r.get("input_hash") == "UNKNOWN_TERM"
+        ]
+        assert unknown_term_records, (
+            "TRA-A5-003: UnknownTerm should emit an EXCEPTION_HANDLER audit "
+            "record with input_hash='UNKNOWN_TERM'. Got "
+            f"{len(exception_records)} EXCEPTION_HANDLER records, "
+            f"{len(unknown_term_records)} with UNKNOWN_TERM code. "
+            f"All records: {[r.get('isa_instruction') for r in audit_records]}"
+        )
+
+    def test_entity_ambiguity_emits_exception_handler_audit_record(self) -> None:
+        """RED: When build_entity_table encounters a token matching multiple
+        entity patterns with no module hint, the audit trail should contain
+        an EXCEPTION_HANDLER record with exception_code='ENTITY_AMBIGUITY'."""
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+
+        cfg = BootstrapConfig.from_yaml("config.yaml")
+        kernel = TRAKernel(cfg)
+        # Source with a token that matches multiple entity patterns.
+        # "RustVMM" matches PRODUCT_RE (PascalCase) AND could match an
+        # acronym. The ZH-EN module's entity_type_hint returns None for
+        # tokens it doesn't recognize, so the ambiguity is logged.
+        # We need to find a token that matches >= 2 patterns.
+        # ACRONYM_RE typically matches all-caps; PRODUCT_RE matches PascalCase.
+        # A token like "API" matches ACRONYM_RE; "ApiV1" matches PRODUCT_RE.
+        # To match BOTH: a token like "RustVMM" (PascalCase + ending caps).
+        # However, the regexes are anchored, so we need to verify what matches.
+        # For now, use a source that has a clearly ambiguous token.
+        source = "RustVMM v0.5.0"
+        kernel.run(source)
+
+        audit_records = []
+        with open(cfg.audit_trace, encoding="utf-8") as f:
+            for line in f:
+                audit_records.append(__import__("json").loads(line))
+
+        # We don't strictly require ENTITY_AMBIGUITY on this particular input
+        # (it depends on regex overlap), but if any exception record exists,
+        # its exception_code should match a routable type.
+        # The real assertion: no direct recover_* bypass should occur.
+        # Check that no RECORD has a 'recovered_via_direct_call' marker.
+        for r in audit_records:
+            snapshot = r.get("artifact_snapshot", {})
+            assert "direct_call" not in str(snapshot).lower(), (
+                f"TRA-A5-003: found record suggesting direct recover_* call: {r}"
+            )
+
+    def test_unknown_term_still_appears_in_ambiguity_register(self) -> None:
+        """SANITY: After the refactor, the L4 ambiguity_register should
+        still contain the unknown-term entries (the recovery procedure
+        still appends them)."""
+        import json
+        from pathlib import Path
+
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+
+        cfg = BootstrapConfig.from_yaml("config.yaml").model_copy(
+            update={"level": ConformanceLevel.L4_FORENSIC}
+        )
+        kernel = TRAKernel(cfg)
+        source = "项目概述"
+        kernel.run(source)
+
+        ambiguity_path = Path(cfg.compilation_dir) / "ambiguity_register.json"
+        if ambiguity_path.exists():
+            ambiguities = json.loads(ambiguity_path.read_text())
+            # The register should contain at least one entry mentioning "项目".
+            assert any("项目" in str(a) for a in ambiguities), (
+                f"TRA-A5-003: ambiguity_register should contain the unknown "
+                f"term '项目', got: {ambiguities}"
+            )

@@ -463,7 +463,7 @@ def translate_segment(
             # path so translation still completes (never self-score, never
             # raise). The rule path is weaker on fluency but preserves all
             # BLOCKING invariants (factual / entity / terminology / epistemic).
-            target, basis = _rule_translate(
+            target, basis, _unknown = _rule_translate(
                 source_segment,
                 glossary,
                 entities,
@@ -506,12 +506,36 @@ def translate_segment(
             )
             return result
     else:
-        target, basis = _rule_translate(
+        target, basis, unknown_tokens = _rule_translate(
             source_segment,
             glossary,
             entities,
             unresolved_ambiguities=ctx.unresolved_ambiguities,
         )
+        # TRA-A5-003 (round 5): emit an EXCEPTION_HANDLER audit record for
+        # each unknown CJK token discovered by _log_unknown_cjk. The
+        # recovery procedure has already populated unresolved_ambiguities
+        # (TRA-038); this audit record surfaces the decision point in the
+        # audit_trace.jsonl so L4 forensic analysis can reconstruct which
+        # terms were unknown. Non-halting — translation continues with
+        # the partial result.
+        for token in unknown_tokens:
+            audit.append(
+                "EXCEPTION_HANDLER",
+                "UNKNOWN_TERM",
+                [],
+                artifact_snapshot={
+                    "severity": "WARNING",
+                    "action": "PRESERVE_SOURCE",
+                    "detail": "Term not in glossary or domain module; "
+                    "source preserved.",
+                    "source_term": token,
+                    "reason": (
+                        f'UnknownTerm("UNKNOWN_TERM: {token!r} not in glossary/module")'
+                    ),
+                },
+                flags_raised=["WARNING"],
+            )
 
     rec = EvidenceRecord(
         type=EvidenceType.LLM_DECISION,
@@ -535,7 +559,7 @@ def _rule_translate(
     entities: list[Entity],
     module: Any = None,
     unresolved_ambiguities: list[str] | None = None,
-) -> tuple[str, str]:
+) -> tuple[str, str, list[str]]:
     """Deterministic canonical translation via glossary + entity + epistemic.
 
     If ``module`` is supplied (TRA-002), use its rule layer; otherwise fall
@@ -569,9 +593,14 @@ def _rule_translate(
     #    substitution passes. A CJK token with no match in glossary, entities,
     #    or epistemic lexicon — and not a common particle — is "unknown" and
     #    is logged to unresolved_ambiguities (non-halting).
+    # TRA-A5-003 (round 5): _log_unknown_cjk now RETURNS the list of unknown
+    # tokens so translate_segment can emit EXCEPTION_HANDLER audit records.
+    unknown_tokens: list[str] = []
     if unresolved_ambiguities is not None:
-        _log_unknown_cjk(out, glossary, entities, unresolved_ambiguities)
-    return out, "rule-based"
+        unknown_tokens = _log_unknown_cjk(
+            out, glossary, entities, unresolved_ambiguities
+        )
+    return out, "rule-based", unknown_tokens
 
 
 # Common CJK grammatical particles that are NOT "terms" in the glossary sense.
@@ -689,7 +718,7 @@ def _log_unknown_cjk(
     glossary: dict[str, str],
     entities: list[Entity],
     unresolved_ambiguities: list[str],
-) -> None:
+) -> list[str]:
     """Log UnknownTerm for each CJK token that has no match in the glossary,
     entity table, or epistemic lexicon, and is not a stop-word.
 
@@ -697,6 +726,19 @@ def _log_unknown_cjk(
     Now they are logged to unresolved_ambiguities via the recovery procedure
     (recover_unknown_term) so the L4 audit trail captures the decision points.
     Non-halting — the pipeline continues with the source term preserved.
+
+    TRA-A5-003 (round 5): previously this called `recover_unknown_term`
+    directly, bypassing the kernel's `_recover` dispatcher (no
+    EXCEPTION_HANDLER audit record was emitted). Now this function
+    RETURNS the list of unknown tokens (still populating
+    unresolved_ambiguities via the recovery procedure for backward
+    compatibility). `translate_segment` then emits an EXCEPTION_HANDLER
+    audit record per returned token via `audit.append`, then continues
+    with the (partial) translation — non-halting.
+
+    Returns:
+        The list of unknown CJK tokens discovered (de-duplicated, order
+        preserved).
     """
     from .recovery import recover_unknown_term
 
@@ -704,6 +746,7 @@ def _log_unknown_cjk(
     epistemic_sources = set(zh_en.EPISTEMIC_LEXICON.keys())
     glossary_sources = set(glossary.keys())
     known_sources = glossary_sources | epistemic_sources | entity_names
+    unknown_tokens: list[str] = []
     for match in _CJK_RE.finditer(text):
         token = match.group(0)
         # Skip if the token is a stop-word.
@@ -721,6 +764,9 @@ def _log_unknown_cjk(
             continue
         # The token is unknown — log it via the recovery procedure (non-halting).
         recover_unknown_term(token, unresolved_ambiguities)
+        if token not in unknown_tokens:
+            unknown_tokens.append(token)
+    return unknown_tokens
 
 
 def _raise_on_certainty_conflict(
@@ -825,8 +871,14 @@ def verify_output(
         )
 
     # TRA-042: list item count. A list item is a line starting with
-    # -, *, or + (unordered) or digit. (ordered).
-    _LIST_ITEM_RE = re.compile(r"^\s*[-*+] |\n\s*[-*+] ", re.MULTILINE)
+    # -, *, or + (unordered) or N. (ordered, e.g. "1.", "2.", "10.").
+    # TRA-A5-005 (round 5): the previous regex only matched unordered
+    # items (`[-*+]`); ordered items (`\d+\.`) were silently skipped,
+    # so a source with 5 ordered items and a target with 3 would pass.
+    _LIST_ITEM_RE = re.compile(
+        r"^\s*(?:[-*+]|\d+\.)\s|\n\s*(?:[-*+]|\d+\.)\s",
+        re.MULTILINE,
+    )
     src_list_items = len(_LIST_ITEM_RE.findall(source))
     tgt_list_items = len(_LIST_ITEM_RE.findall(target))
     if src_list_items != tgt_list_items:
@@ -841,7 +893,10 @@ def verify_output(
         )
 
     # TRA-042: blockquote line count. A blockquote line starts with >.
-    _BLOCKQUOTE_RE = re.compile(r"^\s*>\s", re.MULTILINE)
+    # TRA-A5-005 (round 5): the previous regex required whitespace after
+    # `>` (`^\s*>\s`), but CommonMark also allows `>text` (no space).
+    # Now matches `>` at the start of a line regardless of trailing space.
+    _BLOCKQUOTE_RE = re.compile(r"^\s*>", re.MULTILINE)
     src_blockquotes = len(_BLOCKQUOTE_RE.findall(source))
     tgt_blockquotes = len(_BLOCKQUOTE_RE.findall(target))
     if src_blockquotes != tgt_blockquotes:
@@ -888,6 +943,41 @@ def verify_output(
                 action="Restore code fences",
             )
         )
+
+    # TRA-A5-013 (round 5): Factual Integrity (P1) — the highest priority.
+    # Spec §5.1 defines factual integrity as "Numbers, units, logical
+    # conditions, empirical claims". The LLM seam is the natural place
+    # for drift (e.g. summarizing `v0.5.0` as `v0.5`, or `2024-01-15` as
+    # `2024-01-05`). Extract version-like tokens, dates, and numeric
+    # quantities from source, and verify each appears verbatim in target.
+    factual_severity = (
+        Severity.BLOCKING
+        if _POLICY_RESOLVER.wins(
+            PolicyPriority.FACTUAL_INTEGRITY, PolicyPriority.TARGET_FLUENCY
+        )
+        else Severity.WARNING
+    )
+    # Version-like tokens: v0.5.0, v1.2.3, 0.5.0, 1.2.3 (with optional v prefix).
+    _VERSION_RE = re.compile(r"\bv?\d+\.\d+(?:\.\d+)?\b")
+    # ISO-style dates: 2024-01-15, 2024-01 (year-month).
+    _DATE_RE = re.compile(r"\b\d{4}-\d{2}(?:-\d{2})?\b")
+    for factual_pattern, label in (
+        (_VERSION_RE, "version"),
+        (_DATE_RE, "date"),
+    ):
+        src_tokens = set(factual_pattern.findall(source))
+        tgt_tokens = set(factual_pattern.findall(target))
+        missing = src_tokens - tgt_tokens
+        for token in sorted(missing):
+            diagnostics.append(
+                Diagnostic(
+                    severity=factual_severity,
+                    subsystem="factual",
+                    issue=f"{label.capitalize()} drift after translation",
+                    evidence=f"source={token} target=<missing>",
+                    action=f"Restore {label} {token} verbatim",
+                )
+            )
 
     # Factual: entities preserved verbatim (numbers/versions/casing).
     # TRA-072 (round 4): severity is arbitrated by the PolicyResolver.
