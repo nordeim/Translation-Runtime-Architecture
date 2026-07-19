@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -226,8 +227,21 @@ class TRAKernel:
         self.state = next_state
         self.ctx.execution_log.append(next_state.value)
 
-    def run(self, source: str | Path) -> str:
-        """Execute the full pipeline; return the translated target markdown."""
+    def run(
+        self,
+        source: str | Path,
+        *,
+        llm_translate: Callable[[str, RuntimeContext], str] | None = None,
+    ) -> str:
+        """Execute the full pipeline; return the translated target markdown.
+
+        TRA-D5-002 (round 5): the optional `llm_translate` callback is the
+        dependency-injection seam for the LLM. Previously the only way to
+        supply an LLM was to monkeypatch tra.kernel.translate_segment at
+        module level (fragile — any rename breaks tests silently). Now
+        callers pass the callback here; _execute_translation forwards it
+        to translate_segment.
+        """
         src = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
         # Sanitization happens inside analyze_document (TRA-012 single chokepoint).
 
@@ -296,7 +310,7 @@ class TRAKernel:
             self._recover(exc)
         self._transition(KernelState.BUILD_ARTIFACTS)
 
-        target = self._execute_translation(src)
+        target = self._execute_translation(src, llm_translate=llm_translate)
         self._transition(KernelState.EXECUTE_TRANSLATION)
 
         diagnostics = verify_output(target, src, self.ctx, self.audit)
@@ -449,8 +463,17 @@ class TRAKernel:
 
     # --- translation (segment-level, rule-based in Phase 2) -----------
 
-    def _execute_translation(self, src: str) -> str:
+    def _execute_translation(
+        self,
+        src: str,
+        *,
+        llm_translate: Callable[[str, RuntimeContext], str] | None = None,
+    ) -> str:
         """Execute TRANSLATE_SEGMENT on the source.
+
+        TRA-D5-002 (round 5): the optional llm_translate callback is
+        forwarded to translate_segment. Previously the only way to supply
+        an LLM was module-level monkeypatching.
 
         TRA-001 (partial): code blocks are no-translate zones. We extract
         them before translation, translate the rest, then restore them.
@@ -484,8 +507,15 @@ class TRAKernel:
         protected = _INLINE_RE.sub(_stash_inline, protected)
 
         # Translate the protected source (code blocks are now placeholders).
+        # TRA-D5-002 (round 5): forward the llm_translate callback so callers
+        # can inject an LLM via dependency injection (no module-level patching).
         result = translate_segment(
-            protected, self.ctx, self.cache, self.evidence, self.audit
+            protected,
+            self.ctx,
+            self.cache,
+            self.evidence,
+            self.audit,
+            llm_translate=llm_translate,
         )
         translated = result.translation
 

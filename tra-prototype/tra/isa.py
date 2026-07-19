@@ -48,6 +48,7 @@ from .memory import (
     StructuralMap,
 )
 from .modules import zh_en
+from .modules.base import LanguageModuleProtocol
 from .modules.zh_en import ZHENModule
 from .policy import PolicyResolver
 from .utils import extract_entities
@@ -78,8 +79,12 @@ def analyze_document(
 ) -> tuple[DocumentProfile, StructuralMap]:
     """Extract macro-structure + metadata; initialize RuntimeContext.
 
-    Failure: EMPTY_SOURCE, MALFORMED_MARKDOWN.
+    Inputs: source markdown (str | Path), RuntimeContext, AuditTrail.
+    Outputs: tuple[DocumentProfile, StructuralMap].
     Invariant: node_count(structural_map) == node_count(source_AST).
+    Failure Condition: EMPTY_SOURCE, MALFORMED_MARKDOWN (raises
+    BrokenMarkdown); at L3/L4, the kernel raises ConformanceFailure
+    (TRA-036).
 
     Sanitization chokepoint (TRA-012): the source is sanitized HERE, in the
     ISA instruction, so every caller (TRAKernel.run, validate, benchmark)
@@ -200,10 +205,15 @@ def _detect_evidence_style(source: str) -> str | None:
 # --------------------------------------------------------------------------- #
 
 
-def _module(ctx: RuntimeContext) -> Any:
+def _module(ctx: RuntimeContext) -> LanguageModuleProtocol:
     """Return the active language module (TRA-002). Prefers ctx.module
     (set by the kernel from the registry); falls back to the module-level
-    _MODULE singleton for direct ISA calls in tests."""
+    _MODULE singleton for direct ISA calls in tests.
+
+    TRA-B5-012 (round 5): return type is now `LanguageModuleProtocol`
+    instead of `Any`. This lets mypy --strict catch typos in method names
+    (e.g. get_glossary_mappings vs get_glossary_mapping) at call sites.
+    """
     return ctx.module if ctx.module is not None else _MODULE
 
 
@@ -216,8 +226,13 @@ def build_glossary(
 ) -> tuple[list[GlossaryEntry], list[ForbiddenMapping]]:
     """Establish canonical terminology; flag drift targets.
 
+    Inputs: source markdown, DocumentProfile, RuntimeContext,
+    EvidenceRegistry, AuditTrail.
+    Outputs: tuple[list[GlossaryEntry], list[ForbiddenMapping]].
     Invariant: every recurring term (>=2x) gets exactly one canonical mapping
     unless context_sensitive. CONFLICTING_MAPPINGS raised on two targets.
+    Failure Condition: GLOSSARY_CONFLICT (raises GlossaryConflict); at
+    L3/L4, the kernel's _recover dispatcher handles it (TRA-041).
     """
     mod = _module(ctx)
     mappings = mod.get_glossary_mappings()
@@ -312,7 +327,13 @@ def build_entity_table(
 ) -> list[Entity]:
     """Isolate immutable identifiers (Spec §3). All mutable=False.
 
+    Inputs: source markdown, StructuralMap, RuntimeContext,
+    EvidenceRegistry, AuditTrail.
+    Outputs: list[Entity] (each with mutable=False).
     Invariant: entities excluded from translation; casing/punctuation preserved.
+    Failure Condition: ENTITY_AMBIGUITY (when a token matches multiple
+    entity patterns and entity_type_hint returns None — logged via
+    recover_entity_ambiguity, non-halting).
 
     TRA-038 (round 4 remediation): when a token matches multiple entity
     patterns (e.g., both ACRONYM_RE and PRODUCT_RE) AND the module's
@@ -406,10 +427,18 @@ def translate_segment(
 ) -> TranslationResult:
     """Generate target-language equivalent of one source segment.
 
-    Cache-first (Spec §0.4): identical context -> byte-identical output.
-    Deterministic rule path when no LLM seam is supplied.
+    Inputs: source_segment, RuntimeContext, TranslationCache,
+    EvidenceRegistry, AuditTrail, optional llm_translate callback.
+    Outputs: TranslationResult (translation, evidence_ids, cache_hit).
     Invariant: factual qualifiers/numbers/epistemic markers preserved;
     terminology matches glossary; entities inserted verbatim.
+    Failure Condition: loss of meaning, hallucination of facts, or
+    violation of Glossary invariant. CertaintyConflict raised in the LLM
+    path when a forbidden drift target is detected (TRA-038). UnknownTerm
+    raised (non-halting) when a CJK token has no match (TRA-A5-003).
+
+    Cache-first (Spec §0.4): identical context -> byte-identical output.
+    Deterministic rule path when no LLM seam is supplied.
     """
     glossary = {e.source: e.target for e in ctx.glossary_cache}
     entities = ctx.entity_table
@@ -820,6 +849,15 @@ def verify_output(
 ) -> list[Diagnostic]:
     """Audit target against source + runtime constraints (Spec §7).
 
+    Inputs: target markdown, source markdown, RuntimeContext, AuditTrail.
+    Outputs: list[Diagnostic] (each with severity, subsystem, issue,
+    evidence, action).
+    Invariant: all violations categorized by severity (BLOCKING / WARNING /
+    INFO); never self-scores (reads only target/source/ctx, not
+    confidence_note). Severity arbitrated by PolicyResolver (TRA-072).
+    Failure Condition: None (verification always completes, may flag
+    errors — Spec §3 VERIFY_OUTPUT).
+
     Exhaustive; cannot skip sections. Every violation -> Diagnostic with
     severity BLOCKING / WARNING / INFO.
     """
@@ -1093,8 +1131,13 @@ def repair_segment(
 ) -> str:
     """Surgically resolve a single diagnostic without new violations.
 
+    Inputs: target_segment, source_segment, Diagnostic, RuntimeContext,
+    EvidenceRegistry, AuditTrail, optional attempt/max_retries/segment_index.
+    Outputs: repaired target_segment (str).
     Invariant: must not introduce new BLOCKING; must not violate a higher
     policy. UNRECOVERABLE if fixing would break a higher-priority invariant.
+    Failure Condition: unable to resolve violation without violating a
+    higher-priority Policy (raises Unrecoverable — Spec §3 REPAIR_SEGMENT).
 
     Records each attempt in `ctx.repair_history` for L4 forensic tracing
     (§6.4.2) regardless of whether it resolved the violation.

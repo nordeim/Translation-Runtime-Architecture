@@ -8,19 +8,15 @@ from tra.config import BootstrapConfig
 from tra.exceptions import TRAException
 from tra.kernel import KernelState, TRAKernel
 
-
-def _kernel(tmp_path: Path) -> TRAKernel:
-    # Uses the shared kernel_config fixture pattern (TRA-034).
-    config_path = Path(__file__).resolve().parent.parent / "config.yaml"
-    cfg = BootstrapConfig.from_yaml(str(config_path)).model_copy(
-        update={
-            "base_dir": str(tmp_path),
-            "cache_directory": str(tmp_path / "cache"),
-            "compilation_dir": str(tmp_path / "compilation_artifacts"),
-            "audit_trace": str(tmp_path / "audit_trace.jsonl"),
-        }
-    )
-    return TRAKernel(cfg)
+# TRA-D5-008 (round 5): the shared `kernel_config` fixture (conftest.py)
+# replaces the inline `_kernel(tmp_path)` helper, eliminating duplicated
+# config-loading boilerplate across test_kernel.py / test_phase6_hardening.py /
+# test_benchmark.py / test_outstanding_findings.py.
+#
+# Tests that need a TRAKernel instance should accept the `kernel_config`
+# fixture and construct TRAKernel(kernel_config). For tests that need a
+# TRAKernel without running the pipeline (e.g. state-machine assertions),
+# use `kernel_config` directly.
 
 
 EXAMPLE = """# Security Advisory
@@ -31,8 +27,8 @@ for the RustVMM v0.5.0 release.
 """
 
 
-def test_kernel_runs_full_pipeline(tmp_path: Path):
-    k = _kernel(tmp_path)
+def test_kernel_runs_full_pipeline(kernel_config: BootstrapConfig):
+    k = TRAKernel(kernel_config)
     out = k.run(EXAMPLE)
     assert "Confirmed" in out
     assert "execution environment" in out
@@ -41,8 +37,8 @@ def test_kernel_runs_full_pipeline(tmp_path: Path):
     assert "v0.5.0" in out
 
 
-def test_kernel_emits_audit_trace(tmp_path: Path):
-    k = _kernel(tmp_path)
+def test_kernel_emits_audit_trace(kernel_config: BootstrapConfig):
+    k = TRAKernel(kernel_config)
     k.run(EXAMPLE)
     assert len(k.audit._buffer) >= 5  # one record per ISA instruction
     instructions = {r.isa_instruction for r in k.audit._buffer}
@@ -53,8 +49,8 @@ def test_kernel_emits_audit_trace(tmp_path: Path):
     assert "VERIFY_OUTPUT" in instructions
 
 
-def test_kernel_exports_artifacts(tmp_path: Path):
-    k = _kernel(tmp_path)
+def test_kernel_exports_artifacts(kernel_config: BootstrapConfig, tmp_path: Path):
+    k = TRAKernel(kernel_config)
     k.run(EXAMPLE)
     arts = tmp_path / "compilation_artifacts"
     assert (arts / "glossary.yaml").exists()
@@ -63,8 +59,8 @@ def test_kernel_exports_artifacts(tmp_path: Path):
     assert (arts / "style_profile.yaml").exists()
 
 
-def test_kernel_state_machine_is_sequential():
-    k = _kernel(Path("/tmp"))
+def test_kernel_state_machine_is_sequential(kernel_config: BootstrapConfig):
+    k = TRAKernel(kernel_config)
     # Cannot jump to EMIT before BOOTSTRAP-style ordering enforced by run().
     seq = [
         KernelState.INITIALIZE_RUNTIME,
@@ -82,8 +78,8 @@ def test_kernel_state_machine_is_sequential():
     assert k.ctx.execution_log[-1] == "EMIT_PAYLOAD"
 
 
-def test_kernel_illegal_backward_transition():
-    k = _kernel(Path("/tmp"))
+def test_kernel_illegal_backward_transition(kernel_config: BootstrapConfig):
+    k = TRAKernel(kernel_config)
     k._transition(KernelState.INITIALIZE_RUNTIME)
     k._transition(KernelState.ANALYZE_DOCUMENT)
     try:
@@ -93,8 +89,8 @@ def test_kernel_illegal_backward_transition():
         pass
 
 
-def test_kernel_audit_trail_on_disk(tmp_path: Path):
-    k = _kernel(tmp_path)
+def test_kernel_audit_trail_on_disk(kernel_config: BootstrapConfig):
+    k = TRAKernel(kernel_config)
     k.run(EXAMPLE)
     trace = Path(k.config.audit_trace)
     assert trace.exists()
@@ -102,7 +98,7 @@ def test_kernel_audit_trail_on_disk(tmp_path: Path):
     assert len(lines) == len(k.audit._buffer)
 
 
-def test_kernel_records_exception_recovery(tmp_path: Path):
+def test_kernel_records_exception_recovery(kernel_config: BootstrapConfig):
     from tra.modules.zh_en import ZHENModule
 
     # Force a GLOSSARY_CONFLICT during BUILD_GLOSSARY to exercise the
@@ -111,7 +107,7 @@ def test_kernel_records_exception_recovery(tmp_path: Path):
     orig = ZHENModule.get_glossary_mappings
     ZHENModule.get_glossary_mappings = lambda self: {"成立": "Valid"}  # type: ignore[method-assign]
     try:
-        k = _kernel(tmp_path)
+        k = TRAKernel(kernel_config)
         k.run(EXAMPLE)
     finally:
         ZHENModule.get_glossary_mappings = orig  # type: ignore[method-assign]

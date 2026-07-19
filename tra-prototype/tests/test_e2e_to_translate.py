@@ -75,6 +75,11 @@ def _run_kernel_with_manual_llm(
     """Run the TRA kernel with the llm_translate seam hijacked to return
     the manual translation.
 
+    TRA-D5-002 (round 5): previously this patched tra.kernel.translate_segment
+    at module level (fragile — any rename breaks the test silently). Now
+    uses dependency injection: passes llm_translate as a kwarg to
+    TRAKernel.run().
+
     Returns (kernel, target) so the caller can inspect the audit trail and
     artifacts.
     """
@@ -85,23 +90,8 @@ def _run_kernel_with_manual_llm(
         call_count += 1
         return manual_translation
 
-    # Patch translate_segment in the kernel's namespace so the kernel's
-    # _execute_translation call picks up the llm_translate override.
-    import tra.kernel as kernel_mod
-
-    orig_translate = kernel_mod.translate_segment
-
-    def patched_translate(source_segment, ctx, cache, evidence, audit, **kwargs):
-        kwargs["llm_translate"] = manual_llm
-        return orig_translate(source_segment, ctx, cache, evidence, audit, **kwargs)
-
-    kernel_mod.translate_segment = patched_translate
-    try:
-        kernel = TRAKernel(cfg)
-        target = kernel.run(source)
-    finally:
-        # Restore the original so other tests aren't affected.
-        kernel_mod.translate_segment = orig_translate
+    kernel = TRAKernel(cfg)
+    target = kernel.run(source, llm_translate=manual_llm)
 
     assert call_count >= 1, "llm_translate was never called — hijack failed"
     return kernel, target
