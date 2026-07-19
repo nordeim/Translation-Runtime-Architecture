@@ -123,15 +123,31 @@ mypy --strict tra
   to ~15. (Note: `structlog` is no longer a listed dependency, so the Phase
   6.3.1 structured-logging gap is moot until `structlog` is re-added with a
   concrete integration plan.)
-- **Benchmark coverage** (TRA-031, improved): 24 of 24 spec cases implemented
-  (S-03 and E-03 added in round 4 remediation, TRA-092); spec target is 100+.
+- **Benchmark coverage** (TRA-031, improved): 36 of 100+ spec target cases
+  implemented (S-03 and E-03 added in round 4 remediation, TRA-092; +12 cases
+  added in round 5 remediation covering tables, nested lists, blockquotes,
+  HRs, ISO dates, numeric units, comparison operators, CVE advisories, API
+  refs, and acronym ambiguity).
+- **LLM seam** (TRA-090 fixed in round 5; TRA-D5-002): `TRAKernel.run()` now
+  accepts an optional `llm_translate: Callable[[str, RuntimeContext], str] |
+  None` callback (dependency injection). Previously the only way to supply
+  an LLM was module-level monkeypatching of `tra.kernel.translate_segment`
+  (fragile — any rename broke tests silently).
+- **Factual integrity** (TRA-A5-013 fixed in round 5): `verify_output` now
+  checks that version-like tokens (v0.5.0, 1.2.3) and ISO dates (2024-01-15)
+  in the source appear verbatim in the target. `FACTUAL_INTEGRITY` (P1, the
+  highest priority) is now arbitrated through `_POLICY_RESOLVER.wins()` —
+  previously the only spec-mandated check with NO implementation.
+- **ISA contract docstrings** (TRA-A5-010 fixed in round 5): all 6 ISA
+  instruction docstrings now include explicit Spec §3 contract labels
+  (Inputs/Outputs/Invariant/Failure Condition).
 
-See `docs/audit/round4/TRA_audit_findings_register_r4.xlsx` for the full
-Round 4 audit register (47 issues + 19 positive verifications) and
-`docs/audit/round4/TRA_Prototype_Audit_Report_r4.docx` for the narrative
-report. Round 3 deliverables (36 findings) are in `docs/audit/round3/`.
-Round 2 deliverables (41 findings) are in `docs/audit/round2/`. Round 1
-deliverables are in `docs/audit/` (top level). Round 5 deliverables (68
-findings: 46 issues + 22 positive verifications; 0 BLOCKING / 7 WARNING /
-39 INFO) are in `docs/audit/round5/`. Current test count: **228
-across 16 test files**.
+See `docs/audit/round5/TRA_audit_findings_register_r5.xlsx` for the full
+Round 5 audit register (68 findings: 46 issues + 22 positive verifications)
+and `docs/audit/round5/TRA_Prototype_Audit_Report_r5.docx` for the narrative
+report. Round 4 deliverables (47 issues + 19 positive verifications) are in
+`docs/audit/round4/`. Round 3 deliverables (36 findings) are in
+`docs/audit/round3/`. Round 2 deliverables (41 findings) are in
+`docs/audit/round2/`. Round 1 deliverables are in `docs/audit/` (top level).
+Current test count: **289 across 16 test files** (was 228 at Round 5 audit
+baseline; +61 from Round 5 remediation commits `eb3d574` through `e75997f`).

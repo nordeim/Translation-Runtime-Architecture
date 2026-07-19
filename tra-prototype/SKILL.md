@@ -217,6 +217,14 @@ registry.register(my_module.as_interface())
 cfg = BootstrapConfig.from_yaml("config.yaml")
 kernel = TRAKernel(cfg, registry=registry)
 target = kernel.run(source_md)
+
+# TRA-D5-002 (round 5): supply an LLM via dependency injection (no
+# module-level monkeypatching). The callback receives (source_segment,
+# ctx) and returns the translated string. If it raises or returns
+# empty/None, the engine degrades to the deterministic rule path.
+def my_llm(source_segment: str, ctx: object) -> str:
+    return "...translation..."
+target = kernel.run(source_md, llm_translate=my_llm)
 ```
 
 The selected module is stored on `ctx.module` and read by every ISA function
@@ -240,20 +248,22 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **228 tests** across 16 test
+All four gates must be green. The full suite is **289 tests** across 16 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
-  (46 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
+  (63 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
   017, 026, 032, 033, 036, 037, 038 (×4 — UnknownTerm, CertaintyConflict,
   EntityAmbiguity, UnknownTermRaisedInProduction), 039, 041, 042, 049, 050,
   051, 053, 054, 072, 073, 074, 075, 076, 077, 078, 088, 089, 093, 096, 097,
-  098, 099, A4-011, B4-009, F4-006, F4-007)
+  098, 099, A4-011, A5-003, A5-005, A5-010, A5-013, A5-014, B4-009, B5-009,
+  B5-010, B5-011, B5-012, D5-002, D5-004/005, D5-007, D5-008, D5-016, D5-017,
+  F4-006, F4-007, F5-010, F5-011)
 - `test_tra043_protocol.py` — LanguageModuleProtocol type-safety tests
 - `test_tra047_config_robustness.py` — BootstrapConfig `from_yaml`/`extra='forbid'` tests
 - `test_tra071_broken_markdown.py` — unclosed-fence structural validation tests
-- `test_e2e_to_translate.py` — E2E tests on `to_translate.md` with manual LLM hijack
-  (12 tests: L3 pipeline, L4 forensics, byte-reproducibility)
-- `test_benchmark.py` — L3 gate coverage (asserts zero `BLOCKING` across S/F/T/D/E/R cases)
+- `test_e2e_to_translate.py` — E2E tests on `to_translate.md` with LLM seam
+  via dependency injection (12 tests: L3 pipeline, L4 forensics, byte-reproducibility)
+- `test_benchmark.py` — L3 gate coverage (asserts zero `BLOCKING` across 36 S/F/T/D/E/R cases)
 
 ---
 
@@ -262,9 +272,11 @@ files, including:
 - **Single language pair** — only ZH↔EN is bundled.
 - **Rule-based fidelity, not fluency** — output is structurally correct and
   terminology-exact but may read awkwardly; the LLM seam is the intended
-  fluency path and is caller-supplied. Code blocks (fenced and inline) are
-  already protected from glossary substitution (TRA-001 partial); full
-  per-leaf-segment translation is still deferred.
+  fluency path and is caller-supplied via dependency injection
+  (`TRAKernel.run(source, llm_translate=callback)` — TRA-D5-002 fixed in
+  round 5). Code blocks (fenced and inline) are already protected from
+  glossary substitution (TRA-001 partial); full per-leaf-segment translation
+  is still deferred.
 - **Dependencies trimmed** (TRA-017, fixed in Round 3): removed 6 unused
   deps (`litellm`, `structlog`, `pydantic-settings`, `mdit-py-plugins`,
   `black`, `pytest-asyncio`) from `pyproject.toml`. Install footprint
@@ -374,11 +386,37 @@ the 5-batch TDD remediation plan.
 **Remaining persistent findings** (not yet fixed): TRA-001 (partial, full
 per-leaf segment translation — Phase 8, ~16h, separate effort), TRA-040
 (EXCEPTION_HANDLER/HALT_ERROR not KernelStates — intentional design decision
-pending spec change), TRA-079 (cache HMAC integrity — INFO, low priority).
-Plus test-coverage gaps (TRA-052/055/056/057/058/090/091/094/095) and doc
-staleness residuals (TRA-061/064/065/066/067). See
-`../docs/audit/round4/master_findings_register_r4.json` for the full
+pending spec change), TRA-079 (cache HMAC integrity — INFO, low priority),
+TRA-094 (mutation testing framework — INFO, deferred). See
+`../docs/audit/round5/master_findings_register_r5.json` for the full
 machine-readable register.
+
+**Round 5 remediation** (commits `eb3d574` through `e75997f`, HEAD `e75997f`):
+28 of 46 R5 issues fixed via TDD across 4 batches. Test count 228 → 289 (+61).
+- **Batch 1** (commit `eb3d574`): 9 doc-consistency fixes (TRA-C5-001..013) —
+  "228 across 18 test files" → "16 test files" in 4 docs; "34 classes, 139
+  tests" → "46 classes, 91 tests" in implementation_plan.md; README "Known
+  gaps" TRA-099/038/072/092 entries refreshed; "22 of 24" → "24/24"; status.md
+  banner HEAD `aae0bca` → `5476faf`; Round 5 audit references added.
+- **Batch 2** (commit `36246bb`): 3 spec-conformance fixes — TRA-A5-005
+  (ordered-list + `>text` blockquote regex gaps), TRA-A5-013 (factual-
+  integrity check: version + date token preservation, P1 arbitrated via
+  PolicyResolver), TRA-A5-003 (UnknownTerm now emits EXCEPTION_HANDLER audit
+  record). +10 tests.
+- **Batch 5** (commit `bfde6dd`): 7 code-quality fixes — TRA-A5-014 (dead
+  `forbidden_mappings` field removed), TRA-B5-009/010/011 (type-safety
+  residuals: `registry: ModuleRegistry | None`, `list[StructuralNode]`,
+  stale `type: ignore` removed), TRA-F5-010 (`_normalize_language_pair`
+  rejects malformed `--lang`), TRA-F5-011 (`register()` rejects language
+  modules with no `metadata.direction`), TRA-F5-012/013 (authoring guide
+  Protocol snippet + dict-coercion note). +12 tests.
+- **Batches A+B+C** (commit `e75997f`): 9 outstanding findings — TRA-A5-010
+  (ISA docstring contract labels), TRA-D5-008 (`kernel_config` fixture used),
+  TRA-B5-012 (`_module(ctx) -> LanguageModuleProtocol`), TRA-D5-016 (L2 e2e
+  tests), TRA-D5-017 (CLI CliRunner tests for all 4 subcommands), TRA-D5-006
+  (benchmark 24 → 36 cases), TRA-D5-002 (LLM seam DI: `TRAKernel.run(llm_translate=)`),
+  TRA-D5-007 (HITL e2e tests), TRA-D5-004/005 (review_decision override/skip/
+  on_override tests). +39 tests.
 
 ### Audit artifacts
 
