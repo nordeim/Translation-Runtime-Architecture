@@ -286,19 +286,19 @@ Phase 6: Polish, Hardening & L4 Prep (Day 6-7)
  
 Phase 7: Documentation & Delivery (Day 7-8) 
  
-### 7.1 Documentation 
- 
-- [ ] 7.1.1 Architecture decision records (ADRs) for key choices 
-- [ ] 7.1.2 API reference (pdoc/sphinx) 
-- [ ] 7.1.3 Module authoring guide (how to add fr-en, security domain, etc.) 
-- [ ] 7.1.4 Conformance self-audit checklist (auto-generated from code) 
- 
-### 7.2 Final Validation 
- 
-- [ ] 7.2.1 Run full benchmark suite, document results 
-- [ ] 7.2.2 Verify L3 certification criteria met 
-- [ ] 7.2.3 Cross-reference implementation against TRA-SPECIFICATION.md §1-9 
-- [ ] 7.2.4 Verify all 4 review-feedback.md risks addressed 
+### 7.1 Documentation
+
+- [x] 7.1.1 Architecture decision records (ADRs) for key choices *(created `docs/adr/README.md` with 8 ADRs covering immutable kernel, deterministic audit trail, Pydantic v2, LLM seam DI, per-leaf translation, cache HMAC, EXCEPTION_HANDLER design, mutation testing)*
+- [x] 7.1.2 API reference (pdoc/sphinx) *(created `docs/api-reference.md` covering all 10 public modules: kernel, ISA, memory, policy, cache, exceptions, modules, CLI, diagnostics, HITL)*
+- [x] 7.1.3 Module authoring guide (how to add fr-en, security domain, etc.) *(created `TRA-MODULE-AUTHORING.md` in R4 Batch 2, TRA-100)*
+- [x] 7.1.4 Conformance self-audit checklist (auto-generated from code) *(created `docs/conformance-self-audit.md` with L1–L4 checklist, code evidence per item, benchmark results, quality gates)*
+
+### 7.2 Final Validation
+
+- [x] 7.2.1 Run full benchmark suite, document results *(36/36 cases passed, 0 BLOCKING, 0 WARNING — documented in `docs/conformance-self-audit.md`)*
+- [x] 7.2.2 Verify L3 certification criteria met *(L3 CONFORMANT — zero BLOCKING across all 36 benchmark cases; all L3 checklist items verified with code evidence in `docs/conformance-self-audit.md`)*
+- [x] 7.2.3 Cross-reference implementation against TRA-SPECIFICATION.md §1-9 *(created `docs/spec-cross-reference.md` mapping every spec section to implementation with file:line evidence)*
+- [x] 7.2.4 Verify all 4 review-feedback.md risks addressed *(LLM non-determinism → cache-first + HMAC; Anchor breakage → AnchorRegistry + rewrite_links; Evidence chain gaps → EvidenceRegistry + content-addressed IDs; Infinite repair loops → max_retries=3 + Unrecoverable; Policy scope blindness → scope_type + universal PolicyResolver arbitration — all verified in `docs/spec-cross-reference.md` §5)*
  
 ---
  
