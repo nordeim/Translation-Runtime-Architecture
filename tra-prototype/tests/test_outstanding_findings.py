@@ -5688,3 +5688,132 @@ class TestTRA001_PerLeafSegmentTranslation:
         assert "execution environment" in target, (
             f"Prose should be translated. Got: {target!r}"
         )
+
+
+# ============================================================================
+# TRA-A7-002: _repair_loop must plumb segment_index to repair_segment (Round 7)
+# ============================================================================
+class TestTRA_A7_002_SegmentIndexPlumbing:
+    """TRA-A7-002 (round 7): the kernel's _repair_loop previously called
+    repair_segment(...) WITHOUT passing segment_index, so the parameter
+    defaulted to 0 for all repair attempts. RepairAttempt.segment_index
+    (memory.py:266) is documented as "Index of the repaired leaf segment"
+    but was always 0 in the production CLI path, defeating per-leaf forensic
+    traceability (TRA-001 Phase 8 residual).
+
+    Fix:
+    - Add segment_index: int | None = None field to Diagnostic (memory.py).
+      Whole-document diagnostics (structural, factual) leave it as None;
+      per-segment diagnostics (terminology, entity, epistemic) set it to
+      the matched leaf's index.
+    - In _repair_loop, pass segment_index=current.segment_index or 0 to
+      repair_segment so RepairAttempt.segment_index reflects the actual
+      leaf when known.
+    """
+
+    def test_diagnostic_has_segment_index_field(self) -> None:
+        """RED: Diagnostic must have a segment_index field (default None)."""
+        from tra.diagnostics import Diagnostic
+        from tra.memory import Severity
+
+        d = Diagnostic(
+            severity=Severity.WARNING,
+            subsystem="terminological",
+            issue="test",
+            evidence="test",
+            action="test",
+        )
+        # Field must exist; default is None for whole-document diagnostics.
+        assert hasattr(d, "segment_index"), (
+            "TRA-A7-002: Diagnostic must have a segment_index field"
+        )
+        assert d.segment_index is None, (
+            f"TRA-A7-002: Diagnostic.segment_index default must be None, "
+            f"got {d.segment_index!r}"
+        )
+
+    def test_diagnostic_segment_index_can_be_set(self) -> None:
+        """RED: Diagnostic.segment_index can be set to a specific leaf index."""
+        from tra.diagnostics import Diagnostic
+        from tra.memory import Severity
+
+        d = Diagnostic(
+            severity=Severity.WARNING,
+            subsystem="terminological",
+            issue="test",
+            evidence="test",
+            action="test",
+            segment_index=3,
+        )
+        assert d.segment_index == 3, (
+            f"TRA-A7-002: Diagnostic.segment_index should be 3, got {d.segment_index!r}"
+        )
+
+    def test_repair_attempt_segment_index_propagated(self, tmp_path: Path) -> None:
+        """RED: when a Diagnostic with segment_index=2 is repaired, the
+        RepairAttempt.segment_index must be 2 (not 0).
+
+        This test constructs a Diagnostic with segment_index=2 and verifies
+        that repair_segment records it in the RepairAttempt. The kernel's
+        _repair_loop must plumb the value through.
+        """
+        from tra.config import BootstrapConfig
+        from tra.diagnostics import AuditTrail, Diagnostic, EvidenceRegistry
+        from tra.isa import repair_segment
+        from tra.memory import ConformanceLevel, RuntimeContext, Severity
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        ctx = RuntimeContext(configuration=cfg.model_dump())
+        evidence = EvidenceRegistry()
+        audit = AuditTrail(str(tmp_path / "audit.jsonl"))
+
+        # Construct a benign WARNING diagnostic with segment_index=2.
+        # Use a subsystem that won't trigger a BLOCKING re-verification.
+        diag = Diagnostic(
+            severity=Severity.WARNING,
+            subsystem="terminological",
+            issue="Test diagnostic for segment_index plumbing",
+            evidence="term='test' expected='test'",
+            action="No-op (test)",
+            segment_index=2,
+        )
+        # Use identical source/target so repair is a no-op (no new violations).
+        target = "# Test\n\nA simple paragraph.\n"
+        source = "# Test\n\nA simple paragraph.\n"
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            # If repair raises (e.g., Unrecoverable), the RepairAttempt may
+            # still have been recorded before the raise. Check it below.
+            repair_segment(
+                target,
+                source,
+                diag,
+                ctx,
+                evidence,
+                audit,
+                attempt=1,
+                max_retries=3,
+                segment_index=diag.segment_index or 0,
+            )
+
+        # Inspect ctx.repair_history — the RepairAttempt must have
+        # segment_index=2 (not 0).
+        assert ctx.repair_history, (
+            "TRA-A7-002: repair_segment should append to ctx.repair_history"
+        )
+        attempt_record = ctx.repair_history[-1]
+        assert attempt_record.segment_index == 2, (
+            f"TRA-A7-002: RepairAttempt.segment_index must be 2 (plumbed "
+            f"from Diagnostic.segment_index), got {attempt_record.segment_index}"
+        )

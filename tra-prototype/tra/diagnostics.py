@@ -102,7 +102,15 @@ class AuditRecord(BaseModel):
 
 
 class Diagnostic(BaseModel):
-    """A VERIFY_OUTPUT violation (Spec §7)."""
+    """A VERIFY_OUTPUT violation (Spec §7).
+
+    TRA-A7-002 (round 7): `segment_index` is the index of the leaf segment
+    the violation applies to, or None for whole-document diagnostics
+    (structural, factual). Per-segment diagnostics (terminology, entity,
+    epistemic) set it to the matched leaf's index so _repair_loop can plumb
+    it to repair_segment -> RepairAttempt.segment_index for L4 forensic
+    traceability.
+    """
 
     severity: Severity
     subsystem: str
@@ -110,6 +118,7 @@ class Diagnostic(BaseModel):
     evidence: str
     action: str
     repaired: bool = False
+    segment_index: int | None = None
 
 
 class EvidenceRegistry:

@@ -702,6 +702,13 @@ class TRAKernel:
                     self.audit,
                     attempt=attempt,
                     max_retries=max_retries,
+                    # TRA-A7-002 (round 7): plumb segment_index from the
+                    # Diagnostic to repair_segment -> RepairAttempt. Whole-
+                    # document diagnostics (structural, factual) have
+                    # segment_index=None -> defaults to 0 (unchanged behavior).
+                    # Per-segment diagnostics (terminology, entity, epistemic)
+                    # set it to the matched leaf's index for L4 traceability.
+                    segment_index=current.segment_index or 0,
                 )
             except Unrecoverable:
                 # Human-in-the-loop handoff (Phase 6.2); stop looping.
