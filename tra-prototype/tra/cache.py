@@ -25,11 +25,17 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from .memory import Entity, GlossaryEntry, PolicyPriority
+
+if TYPE_CHECKING:
+    # Avoid a hard runtime dependency on diskcache when the cache is
+    # disabled (enabled=False). The type annotation is used by mypy --strict
+    # to catch typos in self._cache.* method calls (TRA-B7-004).
+    import diskcache
 
 # TRA-079 (round 5): fixed app-level HMAC secret. This is NOT cryptographically
 # secret (it's in the source code), but it protects against an attacker who
@@ -129,7 +135,12 @@ class TranslationCache:
     def __init__(self, directory: str | Path, enabled: bool = True) -> None:
         self.directory = Path(directory)
         self.enabled = enabled
-        self._cache: Any = None
+        # TRA-B7-004 (round 7): typed as "diskcache.Cache | None" (was Any)
+        # so mypy --strict catches typos in self._cache.* method calls.
+        # The diskcache import is local to __init__ (runtime) and to
+        # TYPE_CHECKING (static analysis) to avoid a hard dependency when
+        # enabled=False.
+        self._cache: diskcache.Cache | None = None
         if self.enabled:
             import diskcache
 
@@ -147,23 +158,29 @@ class TranslationCache:
         # TRA-079 (round 5): cache values are HMAC-signed. Format:
         # "{hmac_hex}:{json_value}". Verify the HMAC before parsing; if
         # verification fails (tampered entry), treat as cache miss.
-        if isinstance(raw, str):
-            # Check for HMAC prefix (format: "{hmac}:{value}").
-            if ":" not in raw or len(raw.split(":", 1)[0]) != 64:
-                # Old-format entry (no HMAC) — treat as cache miss.
-                # The next set() will write the HMAC-signed format.
-                return None
-            hmac_part, _, value_part = raw.partition(":")
-            if not _verify_signature(value_part, hmac_part):
-                # Tampered entry — treat as cache miss (don't crash).
-                return None
-            import json
+        # TRA-B7-003 (round 7): non-string cache values (e.g. pickle-
+        # deserialized dicts from an attacker who can write to the cache
+        # directory) must be treated as cache misses, NOT passed to
+        # model_validate(). The previous `else` branch accepted any non-
+        # string value, re-opening the pickle deserialization path. Removed.
+        if not isinstance(raw, str):
+            # Non-string value (pickle-deserialized dict, list, int, etc.)
+            # — treat as cache miss. The next set() will overwrite with
+            # the HMAC-signed JSON format.
+            return None
+        # Check for HMAC prefix (format: "{hmac}:{value}").
+        if ":" not in raw or len(raw.split(":", 1)[0]) != 64:
+            # Old-format entry (no HMAC) — treat as cache miss.
+            # The next set() will write the HMAC-signed format.
+            return None
+        hmac_part, _, value_part = raw.partition(":")
+        if not _verify_signature(value_part, hmac_part):
+            # Tampered entry — treat as cache miss (don't crash).
+            return None
+        import json
 
-            parsed = json.loads(value_part)
-            result = TranslationResult.model_validate(parsed)
-        else:
-            # Backward compat: old pickle entries (dict). Migrate on next set.
-            result = TranslationResult.model_validate(raw)
+        parsed = json.loads(value_part)
+        result = TranslationResult.model_validate(parsed)
         result.cache_hit = True
         return result
 

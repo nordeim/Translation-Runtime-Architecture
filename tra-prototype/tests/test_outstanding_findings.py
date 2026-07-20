@@ -5187,6 +5187,32 @@ class TestTRA_B5_004_CacheHmacIntegrity:
             f"old-format entry should be treated as cache miss, got: {retrieved}"
         )
 
+    def test_cache_get_rejects_non_string_pickle_entries(self, tmp_path: Path) -> None:
+        """TRA-B7-003 (round 7): non-string cache values (e.g. pickle-
+        deserialized dicts) must be treated as cache misses, NOT passed
+        to TranslationResult.model_validate(). The previous `else` branch
+        in cache.get accepted any non-string value, re-opening the pickle
+        deserialization path (OWASP A08). An attacker who can write to
+        the cache directory could inject a malicious pickle payload that
+        executes on the next cache.get() call.
+
+        Fix: remove the `else` branch entirely. Any non-string cache value
+        should return None (cache miss) and be overwritten on the next set().
+        """
+        from tra.cache import TranslationCache
+
+        cache = TranslationCache(tmp_path / "cache", enabled=True)
+        # Write a non-string value directly via diskcache (simulating an
+        # attacker who can write to the cache directory). diskcache uses
+        # pickle for non-string values.
+        cache._cache.set("key1", {"translation": "evil"}, expire=None)
+        # Should return None (cache miss), NOT validate the dict.
+        retrieved = cache.get("key1")
+        assert retrieved is None, (
+            f"TRA-B7-003: non-string cache value should be treated as cache "
+            f"miss (not passed to model_validate), got: {retrieved}"
+        )
+
 
 # ============================================================================
 # TRA-D7-001: No hardcoded absolute paths in test files (Round 7)
