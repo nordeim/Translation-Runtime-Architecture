@@ -150,6 +150,13 @@ class StructuralMap(BaseModel):
         per Spec §3 (leaf-level: sentence, list item, table cell, heading).
 
         The index is 0-based, assigned in document order (depth-first walk).
+
+        TRA-A7-003 (round 7): skip a PARAGRAPH whose parent is a LIST_ITEM.
+        The structural map builder (anchor.py:297-304) creates a LIST_ITEM
+        node with text copied from its first PARAGRAPH child. Without this
+        dedup, both the LIST_ITEM and its PARAGRAPH child would be yielded
+        as separate leaf segments, producing duplicate TRANSLATE_SEGMENT
+        audit records and inflated leaf indices for list-heavy documents.
         """
         # NodeKinds that are translatable leaf segments.
         leaf_kinds = {
@@ -160,13 +167,26 @@ class StructuralMap(BaseModel):
         }
         idx = 0
 
-        def walk(nodes: list[StructuralNode]) -> Iterable[tuple[int, StructuralNode]]:
+        def walk(
+            nodes: list[StructuralNode], parent: StructuralNode | None = None
+        ) -> Iterable[tuple[int, StructuralNode]]:
             nonlocal idx
             for node in nodes:
-                if node.kind in leaf_kinds and node.text is not None:
+                # TRA-A7-003: skip a PARAGRAPH whose parent is a LIST_ITEM
+                # (the LIST_ITEM already carries the text via anchor.py:297-304).
+                is_dup_paragraph = (
+                    node.kind == NodeKind.PARAGRAPH
+                    and parent is not None
+                    and parent.kind == NodeKind.LIST_ITEM
+                )
+                if (
+                    node.kind in leaf_kinds
+                    and node.text is not None
+                    and not is_dup_paragraph
+                ):
                     yield idx, node
                     idx += 1
-                yield from walk(node.children)
+                yield from walk(node.children, parent=node)
 
         yield from walk(self.nodes)
 

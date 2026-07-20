@@ -358,7 +358,15 @@ class TRAKernel:
             self._recover(exc)
         self._transition(KernelState.BUILD_ARTIFACTS)
 
-        target = self._execute_translation(src, llm_translate=llm_translate)
+        # TRA-A7-005 (round 7): wrap _execute_translation in try/except
+        # TRAException so the kernel dispatches through _recover (Spec §6).
+        # Previously this call was unwrapped — a TRAException would crash
+        # the kernel with no EXCEPTION_HANDLER audit record.
+        try:
+            target = self._execute_translation(src, llm_translate=llm_translate)
+        except TRAException as exc:
+            self._recover(exc)
+            target = ""
         self._transition(KernelState.EXECUTE_TRANSLATION)
 
         # TRA-E5-013: verify_output is called TWICE at L3/L4 — this is
@@ -372,7 +380,13 @@ class TRAKernel:
         #      trail records both calls as separate VERIFY_OUTPUT records;
         #      an L4 auditor can reconstruct the pipeline state at each
         #      checkpoint by comparing the two.
-        diagnostics = verify_output(target, src, self.ctx, self.audit)
+        # TRA-A7-005 (round 7): wrap verify_output in try/except so the
+        # kernel dispatches through _recover (Spec §6).
+        try:
+            diagnostics = verify_output(target, src, self.ctx, self.audit)
+        except TRAException as exc:
+            self._recover(exc)
+            diagnostics = []
         # TRA-E5-005 (round 5): if --force-unrecoverable is set, inject a
         # synthetic BLOCKING diagnostic with a special subsystem that
         # repair_segment can't resolve. This forces the UNRECOVERABLE →
@@ -413,7 +427,22 @@ class TRAKernel:
             ConformanceLevel.L3_STRICT,
             ConformanceLevel.L4_FORENSIC,
         ):
-            final_diags = verify_output(target, src, self.ctx, self.audit)
+            # TRA-A7-005 (round 7): wrap the L3 gate verify_output in
+            # try/except. If verify_output itself raises, treat as a
+            # ConformanceFailure (we can't certify what we can't verify).
+            try:
+                final_diags = verify_output(target, src, self.ctx, self.audit)
+            except TRAException as exc:
+                self._recover(exc)
+                final_diags = [
+                    Diagnostic(
+                        severity=Severity.BLOCKING,
+                        subsystem="verify_output_failed",
+                        issue=f"verify_output raised: {exc}",
+                        evidence=str(exc),
+                        action="RAISE_FLAG",
+                    )
+                ]
             final_blocking = [d for d in final_diags if d.severity == Severity.BLOCKING]
             # TRA-037: also reject if _rewrite_anchors appended BROKEN_LINK
             # entries to unresolved_ambiguities — a broken internal link is
@@ -735,7 +764,14 @@ class TRAKernel:
                     )
                 break
             # Re-verify; collect any remaining violations.
-            rediag = verify_output(target, src, self.ctx, self.audit)
+            # TRA-A7-005 (round 7): wrap verify_output in try/except so the
+            # kernel dispatches through _recover (Spec §6). If re-verification
+            # raises, treat as unrecoverable and break the loop.
+            try:
+                rediag = verify_output(target, src, self.ctx, self.audit)
+            except TRAException as exc:
+                self._recover(exc)
+                rediag = []
             pending = rediag
             attempt += 1
         return target

@@ -5843,3 +5843,144 @@ class TestTRA_A7_002_SegmentIndexPlumbing:
             f"TRA-A7-002: RepairAttempt.segment_index must be 2 (plumbed "
             f"from Diagnostic.segment_index), got {attempt_record.segment_index}"
         )
+
+
+# ============================================================================
+# TRA-A7-003: Structural map deduplicates leaf segments for list items (Round 7)
+# ============================================================================
+class TestTRA_A7_003_LeafSegmentDedup:
+    """TRA-A7-003 (round 7): the structural map builder creates BOTH a
+    LIST_ITEM node AND a PARAGRAPH child with the same text. iter_leaf_segments()
+    previously yielded BOTH as translatable leaves, producing duplicate
+    TRANSLATE_SEGMENT audit records and inflated leaf indices for list-heavy
+    documents.
+
+    Fix: in iter_leaf_segments(), skip a PARAGRAPH whose parent is a LIST_ITEM
+    (the LIST_ITEM already carries the text via anchor.py:297-304).
+    """
+
+    def test_list_item_does_not_produce_duplicate_leaf(self) -> None:
+        """RED: a single list item should produce exactly ONE leaf segment,
+        not two (LIST_ITEM + PARAGRAPH child with same text)."""
+        from tra.anchor import build_structural_map
+
+        source = "# H\n\n- item one\n- item two\n"
+        smap, _registry = build_structural_map(source)
+        leaves = list(smap.iter_leaf_segments())
+        # Expected: 1 heading + 2 list items = 3 leaves (not 5)
+        leaf_summary = [(i, n.kind.value, n.text) for i, n in leaves]
+        assert len(leaves) == 3, (
+            f"TRA-A7-003: expected 3 leaf segments (1 heading + 2 list "
+            f"items), got {len(leaves)}. Leaves: {leaf_summary}"
+        )
+        # The list item leaves should be LIST_ITEM kind, not PARAGRAPH.
+        list_item_leaves = [n for _, n in leaves if n.kind.value == "list_item"]
+        assert len(list_item_leaves) == 2, (
+            f"TRA-A7-003: expected 2 LIST_ITEM leaves, got {len(list_item_leaves)}"
+        )
+
+    def test_paragraph_not_under_list_item_still_yields_leaf(self) -> None:
+        """SANITY: a standalone paragraph (not under a list item) must still
+        yield a leaf segment. The dedup only applies to PARAGRAPH children
+        of LIST_ITEM nodes."""
+        from tra.anchor import build_structural_map
+
+        source = "# H\n\nA standalone paragraph.\n"
+        smap, _registry = build_structural_map(source)
+        leaves = list(smap.iter_leaf_segments())
+        # Expected: 1 heading + 1 paragraph = 2 leaves
+        leaf_summary = [(i, n.kind.value, n.text) for i, n in leaves]
+        assert len(leaves) == 2, (
+            f"TRA-A7-003: expected 2 leaf segments (1 heading + 1 "
+            f"paragraph), got {len(leaves)}. Leaves: {leaf_summary}"
+        )
+        paragraph_leaves = [n for _, n in leaves if n.kind.value == "paragraph"]
+        assert len(paragraph_leaves) == 1, (
+            f"TRA-A7-003: expected 1 PARAGRAPH leaf, got {len(paragraph_leaves)}"
+        )
+
+
+# ============================================================================
+# TRA-A7-005: _execute_translation + verify_output wrapped in try/except (Round 7)
+# ============================================================================
+class TestTRA_A7_005_IsaWrappedInRecover:
+    """TRA-A7-005 (round 7): _execute_translation and verify_output were
+    previously NOT wrapped in try/except TRAException. If either raised
+    a TRAException, the kernel would crash without dispatching through
+    _recover, so no EXCEPTION_HANDLER audit record would be emitted.
+
+    Spec §6: "If an ISA instruction raises a TRA-EXCEPTION, the kernel
+    routes it through EXCEPTION_HANDLER (route_exception)."
+
+    Fix: wrap _execute_translation and verify_output call sites in
+    try/except TRAException -> self._recover(exc), matching the pattern
+    used for analyze_document and build_glossary/build_entity_table.
+    """
+
+    def test_execute_translation_raising_routes_through_recover(
+        self, tmp_path: Path
+    ) -> None:
+        """RED: if _execute_translation raises a TRAException, the kernel
+        must dispatch it through _recover and emit an EXCEPTION_HANDLER
+        audit record (not crash with an uncaught exception)."""
+        import json
+        import os
+
+        from tra.config import BootstrapConfig
+        from tra.exceptions import TRAException
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        audit_fd, audit_path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(audit_fd)
+        os.unlink(audit_path)
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L1_BASIC,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        kernel = TRAKernel(cfg)
+
+        # Monkeypatch _execute_translation to raise a TRAException.
+        original_exec = kernel._execute_translation
+
+        def boom(src, llm_translate=None):
+            raise TRAException("synthetic _execute_translation failure")
+
+        kernel._execute_translation = boom  # type: ignore[method-assign]
+        try:
+            # At L1, the kernel should not raise — it should route through
+            # _recover and return an empty string (or partial result).
+            try:
+                kernel.run("# Test\n\nParagraph.\n")
+            except Exception as e:
+                # If the kernel does raise, it should be a ConformanceFailure
+                # at L3/L4 — not the raw TRAException. At L1, it should not
+                # raise at all.
+                assert "TRAException" not in type(e).__name__, (
+                    f"TRA-A7-005: _execute_translation TRAException should be "
+                    f"routed through _recover, not raised. Got: {type(e).__name__}: {e}"
+                )
+        finally:
+            kernel._execute_translation = original_exec  # type: ignore[method-assign]
+
+        # The audit trail must contain an EXCEPTION_HANDLER record for the
+        # synthetic failure.
+        kernel.audit.flush()
+        with open(str(tmp_path / "audit.jsonl")) as f:
+            records = [json.loads(line) for line in f]
+        exception_records = [
+            r for r in records if r.get("isa_instruction") == "EXCEPTION_HANDLER"
+        ]
+        assert exception_records, (
+            "TRA-A7-005: expected at least one EXCEPTION_HANDLER audit record "
+            "after _execute_translation raised a TRAException. Got "
+            f"{len(exception_records)} EXCEPTION_HANDLER records. "
+            f"All records: {[r.get('isa_instruction') for r in records]}"
+        )
