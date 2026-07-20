@@ -3733,7 +3733,7 @@ class TestTRA_A5_014_ForbiddenMappingsDeadFieldRemoved:
             ["rg", "-n", "forbidden_mappings", "tra/"],
             capture_output=True,
             text=True,
-            cwd="/home/z/my-project/Translation-Runtime-Architecture/tra-prototype",
+            cwd=str(Path(__file__).resolve().parent.parent),
         )
         # rg returns 1 when no matches found — that's what we want
         assert result.returncode == 1, (
@@ -3786,7 +3786,7 @@ class TestTRA_B5_009_RegistryTypedAsModuleRegistry:
             ["rg", "-n", "registry.all\\(\\).*type: ignore", "tra/kernel.py"],
             capture_output=True,
             text=True,
-            cwd="/home/z/my-project/Translation-Runtime-Architecture/tra-prototype",
+            cwd=str(Path(__file__).resolve().parent.parent),
         )
         assert result.returncode == 1, (
             f"TRA-B5-009: stale `# type: ignore[attr-defined]` on registry.all() "
@@ -3809,7 +3809,7 @@ class TestTRA_B5_010_CollectHeadingsTypedAsStructuralNode:
         from pathlib import Path
 
         kernel_src = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/kernel.py"
+            str(Path(__file__).resolve().parent.parent / "tra/kernel.py")
         ).read_text()
         tree = ast.parse(kernel_src)
         # Find _collect_headings function def
@@ -3850,7 +3850,7 @@ class TestTRA_B5_011_StaleTypeIgnoreInTestRecovery:
             ["rg", "-n", "type: ignore", "tests/test_recovery.py"],
             capture_output=True,
             text=True,
-            cwd="/home/z/my-project/Translation-Runtime-Architecture/tra-prototype",
+            cwd=str(Path(__file__).resolve().parent.parent),
         )
         assert result.returncode == 1, (
             f"TRA-B5-011: stale `# type: ignore` in test_recovery.py:\n{result.stdout}"
@@ -4409,7 +4409,7 @@ class TestTRA_A5_010_ISADocstringContractLabels:
         from pathlib import Path
 
         src = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/isa.py"
+            str(Path(__file__).resolve().parent.parent / "tra/isa.py")
         ).read_text()
         tree = ast.parse(src)
         for node in ast.walk(tree):
@@ -4459,7 +4459,7 @@ class TestTRA_D5_008_KernelConfigFixtureUsed:
         from pathlib import Path
 
         test_kernel_src = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tests/test_kernel.py"
+            str(Path(__file__).resolve().parent.parent / "tests/test_kernel.py")
         ).read_text()
         # The inline _kernel() helper duplicates base_dir/cache_directory/
         # compilation_dir/audit_trace setup that the fixture already does.
@@ -4487,7 +4487,7 @@ class TestTRA_B5_012_ModuleTypedAsLanguageModuleProtocol:
         from pathlib import Path
 
         src = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/isa.py"
+            str(Path(__file__).resolve().parent.parent / "tra/isa.py")
         ).read_text()
         tree = ast.parse(src)
         for node in ast.walk(tree):
@@ -5189,6 +5189,47 @@ class TestTRA_B5_004_CacheHmacIntegrity:
 
 
 # ============================================================================
+# TRA-D7-001: No hardcoded absolute paths in test files (Round 7)
+# ============================================================================
+class TestTRA_D7_001_NoHardcodedPaths:
+    """TRA-D7-001 (round 7): test files must NOT contain hardcoded absolute
+    paths like the project root because they break portability across
+    containers/checkouts. Use Path(__file__).resolve().parent.parent instead.
+    """
+
+    # The hardcoded path pattern from R6 D6-003. Constructed from parts so
+    # this test file itself doesn't contain the literal string (which would
+    # self-trigger the assertion).
+    _HARDCODED_PREFIX = "/home" + "/z/my-" + "project/"
+
+    def test_no_hardcoded_paths_in_test_outstanding_findings(self) -> None:
+        """The test file itself must not contain hardcoded paths."""
+        from pathlib import Path
+
+        test_file = Path(__file__).resolve()
+        text = test_file.read_text(encoding="utf-8")
+        assert self._HARDCODED_PREFIX not in text, (
+            "TRA-D7-001: test_outstanding_findings.py contains a hardcoded "
+            "absolute path. Use Path(__file__).resolve().parent.parent instead."
+        )
+
+    def test_no_hardcoded_paths_in_other_test_files(self) -> None:
+        """All other test files must also be free of hardcoded paths."""
+        from pathlib import Path
+
+        tests_dir = Path(__file__).resolve().parent
+        offenders = []
+        for test_file in tests_dir.glob("test_*.py"):
+            text = test_file.read_text(encoding="utf-8")
+            if self._HARDCODED_PREFIX in text:
+                offenders.append(test_file.name)
+        assert not offenders, (
+            f"TRA-D7-001: hardcoded paths found in test files: {offenders}. "
+            f"Use Path(__file__).resolve().parent.parent instead."
+        )
+
+
+# ============================================================================
 # TRA-D5-011 / TRA-094: Mutation testing framework integration (Round 5)
 # ============================================================================
 class TestTRA_D5_011_MutationTestingConfigured:
@@ -5296,7 +5337,7 @@ class TestTypeSafety_SelectModuleReturnType:
         from pathlib import Path
 
         src = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/kernel.py"
+            str(Path(__file__).resolve().parent.parent / "tra/kernel.py")
         ).read_text()
         tree = ast.parse(src)
         for node in ast.walk(tree):
@@ -5323,7 +5364,7 @@ class TestTypeSafety_SelectModuleReturnType:
             ["rg", "-n", "source_only_match: Any", "tra/kernel.py"],
             capture_output=True,
             text=True,
-            cwd="/home/z/my-project/Translation-Runtime-Architecture/tra-prototype",
+            cwd=str(Path(__file__).resolve().parent.parent),
         )
         assert result.returncode == 1, (
             f"source_only_match should not be typed as Any:\n{result.stdout}"
@@ -5433,7 +5474,7 @@ class TestTypeSafety_AnchorRegistryType:
         from pathlib import Path
 
         src = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/memory.py"
+            str(Path(__file__).resolve().parent.parent / "tra/memory.py")
         ).read_text()
         tree = ast.parse(src)
         for node in ast.walk(tree):
@@ -5458,7 +5499,7 @@ class TestTypeSafety_AnchorRegistryType:
         from pathlib import Path
 
         src = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/memory.py"
+            str(Path(__file__).resolve().parent.parent / "tra/memory.py")
         ).read_text()
         assert "AnchorRegistry" in src, (
             "AnchorRegistry must be imported in memory.py for the type annotation."
@@ -5487,7 +5528,7 @@ class TestTypeSafety_RuleTranslateModuleParam:
         from pathlib import Path
 
         src = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/isa.py"
+            str(Path(__file__).resolve().parent.parent / "tra/isa.py")
         ).read_text()
         tree = ast.parse(src)
         for node in ast.walk(tree):
