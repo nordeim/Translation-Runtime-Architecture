@@ -364,7 +364,7 @@ File Structure Summary
  
 Dependencies 
  
-> **Updated at HEAD `805a8f8`** (Round 4 audit). The 6 unused dependencies
+> **Updated at HEAD `6d3144a`** (Round 7 audit, 2026-07-21). The 6 unused dependencies
 > (`litellm`, `structlog`, `pydantic-settings`, `mdit-py-plugins`, `black`,
 > `pytest-asyncio`) were removed from `pyproject.toml` in Round 3 remediation
 > commit `a3cd2c1` (TRA-017 fixed). The LLM seam is caller-supplied (never

@@ -38,7 +38,7 @@ Specification-first repo. TRA = Translation Runtime Architecture v1.0 — normat
 | `tra-prototype/SKILL.md` | User + agent guidance for the prototype engine (setup, CLI, conformance levels, quality gates, known limitations, audit remediation status). |
 | `tra-prototype/README.md` | Prototype-specific install + commands + architecture + known gaps. |
 | `tra-prototype/tra/` | The engine source — 16 modules (kernel, isa, memory, policy, cache, anchor, config, exceptions, recovery, hitl, reporting, validate, benchmark, diagnostics, utils + modules/ subpackage). |
-| `tra-prototype/tests/` | 309 tests across 16 files — see `tra-prototype/SKILL.md` §7 for the full inventory. |
+| `tra-prototype/tests/` | 323 tests across 16 files — see `tra-prototype/SKILL.md` §7 for the full inventory. |
 | `tra-prototype/pyproject.toml` | 6 runtime deps + 4 dev deps (ruff, mypy, pytest, mutmut). See `implementation_plan.md` "Dependencies" table. |
 
 ### Audit deliverables (`docs/audit/`)
@@ -50,6 +50,8 @@ Specification-first repo. TRA = Translation Runtime Architecture v1.0 — normat
 | `docs/audit/round3/` | Round 3 | 36 findings (2 BLOCKING / 18 WARNING / 16 INFO) + `remediation_plan.md` |
 | `docs/audit/round4/` | Round 4 | 47 issues + 19 positive verifications (1 BLOCKING / 11 WARNING / 35 INFO) + `remediation_plan_r4.md` |
 | `docs/audit/round5/` | Round 5 | 68 findings (46 issues + 22 positive verifications; 0 BLOCKING / 7 WARNING / 39 INFO) + `remediation_plan_r5.md` |
+| `docs/audit/round6/` | Round 6 | 76 findings (58 issues + 18 positive verifications; 4 BLOCKING / 10 WARNING / 44 INFO) + `remediation_plan_r6.md` |
+| `docs/audit/round7/` | Round 7 | 75 findings (39 issues + 36 positive verifications; 4 BLOCKING all R6-fixed / 18 WARNING / 53 INFO) + `remediation_plan_r7.md` |
 
 **Cross-referencing:** Use document title and section numbers (e.g., "Spec §5.1"), not filename numeric prefixes. The file prefix numbers (1–4) do not match section order in the spec.
 

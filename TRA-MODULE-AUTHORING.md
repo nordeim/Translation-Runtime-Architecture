@@ -166,7 +166,7 @@ def entity_type_hint(self, token: str) -> EntityType | None:
     return None  # no authoritative hint
 ```
 
-### 2.7 `apply_zh_rules(source: str) -> str`
+### 2.7 `apply_zh_rules(text: str) -> str`
 
 The ZH-specific rule layer. Called by `_rule_translate` BEFORE the
 epistemic lexicon and glossary substitution passes. This is where
@@ -174,7 +174,12 @@ topic-comment forms (`系统成立` → `The system is Confirmed`) are
 resolved so the atomic `成立 → Confirmed` substitution doesn't split
 them apart.
 
-For non-ZH modules, this can be a no-op (`return source`).
+For non-ZH modules, this can be a no-op (`return text`).
+
+> **R7 F7-008 / C7-005 fix:** the section header parameter was previously
+> named `source`, which conflicted with the `apply_rules(source: str, direction: str)`
+> signature in §2.6 and the actual `LanguageModuleProtocol.apply_zh_rules(text: str)`
+> in `tra/modules/base.py`. Renamed to `text` for consistency.
 
 ---
 

@@ -132,6 +132,22 @@ If authoring or reviewing an engine against TRA (Conformance Guide L3 checklist)
 | `compilation_artifacts` | Glossary + Structural Map |
 | `audit_trace` | Diagnostics — must contain zero `BLOCKING` errors for L3+ |
 
+## Audit History
+
+The TRA prototype has undergone 7 independent re-audits. Each round's deliverables (DOCX report, XLSX register, severity heatmap, master JSON register, per-track findings, remediation plan) live in `docs/audit/roundN/`.
+
+| Round | HEAD | Findings | Status |
+|---|---|---|---|
+| R1 | (early) | 35 (11 BLOCKING / 22 WARNING / 2 INFO) | 34/35 fixed |
+| R2 | `4b8827c` | 41 (3 BLOCKING / 25 WARNING / 13 INFO) | All fixed |
+| R3 | `b783745` | 36 (2 BLOCKING / 18 WARNING / 16 INFO) | 20/36 fixed in R3 batches |
+| R4 | `805a8f8` | 47+19 (1 BLOCKING / 11 WARNING / 35 INFO) | All 4 critical invariants hold |
+| R5 | `5476faf` | 68 (0 BLOCKING / 7 WARNING / 39 INFO) | All 46 issues fixed in 5 batches |
+| R6 | `c4ecd41` | 76 (4 BLOCKING / 10 WARNING / 44 INFO) | 4 BLOCKING + 6 WARNING fixed in R6 Batch 1 |
+| R7 | `6d3144a` | 75 (4 BLOCKING all R6-fixed / 18 WARNING / 53 INFO) | 9 outstanding WARNING fixed in R7 Batches 1-2; doc updates in Batch 3 |
+
+The latest audit is **Round 7** at HEAD `6d3144a`. See `docs/audit/round7/` for the full deliverables and `docs/audit/round7/remediation_plan_r7.md` for the TDD remediation plan.
+
 ## Contributing
 
 Two kinds of contribution are welcome:

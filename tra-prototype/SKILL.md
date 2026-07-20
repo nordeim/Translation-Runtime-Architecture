@@ -250,7 +250,7 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **309 tests** across 16 test
+All four gates must be green. The full suite is **323 tests** across 16 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
   (71 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
@@ -428,6 +428,38 @@ KernelStates — intentional design decision documented in KernelState docstring
 pending spec change). All other R5 findings are fixed. See
 `../docs/audit/round6/master_findings_register_r6.json` for the full
 machine-readable R6 register.
+
+**Round 7 remediation** (commits `e54e557` through latest, HEAD at end of R7
+Batches 1-3): 9 of 9 outstanding R7 WARNING findings fixed via TDD + doc
+updates. Test count 309 → 323 (+14 new tests).
+- **Batch 1** (commit `e54e557`): TRA-B7-002 — Authorization header regex
+  now consumes BOTH scheme AND credential (`Authorization: Bearer <jwt>` →
+  `[REDACTED]`, not `[REDACTED] <jwt>`). OWASP A09 fix. +6 tests.
+- **Batch 2.1** (commit `76301d4`): TRA-B7-001 — renamed mutmut config keys
+  (`paths_to_mutate` → `source_paths`; removed `tests_dir`). Deprecated keys
+  caused DeprecationWarning on every mutmut 3.6+ invocation. +1 test.
+- **Batch 2.2** (commit `8b64a4d`): TRA-A7-004 + TRA-D7-002 —
+  build_entity_table now emits an EXCEPTION_HANDLER audit record for
+  ENTITY_AMBIGUITY (was direct-calling recover_entity_ambiguity, bypassing
+  the audit trail). Strengthened the previously-vacuous test. +1 e2e test.
+- **Batch 2.3** (commit `fbc6b76`): TRA-A7-001 — cache-hit path now re-emits
+  EXCEPTION_HANDLER audit records for UnknownTerm (was suppressing them on
+  warm-cache runs, breaking L4 forensic completeness). Added
+  `audit_side_effects` field to TranslationResult. +1 test.
+- **Batch 2.4** (commit `9b1186e`): TRA-D7-001 — replaced 12 hardcoded
+  `/home/z/my-project/...` paths in test_outstanding_findings.py with
+  `Path(__file__).resolve().parent.parent`. +2 meta-tests preventing regression.
+- **Batch 2.5** (commit `fcc902c`): TRA-A7-002 — added `segment_index:
+  int | None = None` field to Diagnostic; _repair_loop now plumbs it to
+  repair_segment → RepairAttempt for L4 forensic traceability. +3 tests.
+- **Batch 3** (this commit): doc updates — implementation_plan.md HEAD pin
+  (`805a8f8` → `6d3144a`), README.md Audit History section, status.md banner
+  HEAD pin, AGENTS.md test count + Round 6/7 references, CLAUDE.md test
+  count + Round 6/7 references, SKILL.md test count + R7 remediation log
+  entry, TRA-MODULE-AUTHORING.md §2.7 parameter name fix (`source` → `text`).
+
+See `../docs/audit/round7/master_findings_register_r7.json` for the full
+machine-readable R7 register.
 
 **Round 5 remediation** (commits `eb3d574` through `e75997f`, HEAD `e75997f`):
 28 of 46 R5 issues fixed via TDD across 4 batches. Test count 228 → 289 (+61).
