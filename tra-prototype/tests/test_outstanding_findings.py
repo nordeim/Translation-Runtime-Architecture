@@ -508,6 +508,83 @@ class TestTRA033LLMSeamRobustness:
         assert "Confirmed" in res.translation
 
 
+# ============================================================================
+# TRA-D7-007 (round 7): strengthen TestTRA033LLMSeamRobustness audit-trail checks
+# ============================================================================
+class TestTRA_D7_007_LLMSeamAuditTrailContent:
+    """TRA-D7-007 (round 7): the existing TestTRA033LLMSeamRobustness tests
+    only assert `'Confirmed' in res.translation` — they don't verify the
+    audit trail records the degradation. This class adds tests that inspect
+    the audit trail to verify:
+    - Exactly one TRANSLATE_SEGMENT record is emitted (not two)
+    - The record's artifact_snapshot.degraded == True
+    - The record's artifact_snapshot.reason contains 'llm_unavailable:'
+    """
+
+    def test_degraded_translation_emits_single_audit_record(
+        self, tmp_path: Path
+    ) -> None:
+        """RED (strengthened): when the LLM seam raises, the audit trail
+        must contain exactly ONE TRANSLATE_SEGMENT record with
+        artifact_snapshot.degraded == True.
+        """
+        import json
+
+        from tra.cache import TranslationCache
+        from tra.diagnostics import AuditTrail, EvidenceRegistry
+        from tra.isa import translate_segment
+        from tra.memory import GlossaryEntry, GlossaryStatus, RuntimeContext
+
+        ctx = RuntimeContext()
+        ctx.glossary_cache = [
+            GlossaryEntry(
+                source="成立", target="Confirmed", status=GlossaryStatus.CANONICAL
+            )
+        ]
+        cache = TranslationCache(str(tmp_path / "cache"), enabled=True)
+        audit_path = str(tmp_path / "audit.jsonl")
+
+        def boom(_seg, _ctx):
+            raise RuntimeError("llm down")
+
+        audit = AuditTrail(audit_path)
+        translate_segment(
+            "成立",
+            ctx,
+            cache,
+            EvidenceRegistry(),
+            audit,
+            llm_translate=boom,
+        )
+        # Flush the in-memory buffer to disk so we can read it back.
+        audit.flush()
+
+        # Read the audit trail.
+        with open(audit_path) as f:
+            records = [json.loads(line) for line in f]
+        translate_records = [
+            r for r in records if r.get("isa_instruction") == "TRANSLATE_SEGMENT"
+        ]
+        # Exactly ONE TRANSLATE_SEGMENT record (not two — the old bug emitted
+        # a second record without the degraded flag, TRA-015).
+        assert len(translate_records) == 1, (
+            f"TRA-D7-007: expected exactly 1 TRANSLATE_SEGMENT record, "
+            f"got {len(translate_records)}. "
+            f"All records: {[r.get('isa_instruction') for r in records]}"
+        )
+        # The record must have degraded=True.
+        snapshot = translate_records[0].get("artifact_snapshot", {})
+        assert snapshot.get("degraded") is True, (
+            f"TRA-D7-007: expected artifact_snapshot.degraded == True, "
+            f"got {snapshot.get('degraded')!r}. Snapshot: {snapshot}"
+        )
+        # The reason must contain 'llm_unavailable:'.
+        reason = snapshot.get("reason", "")
+        assert "llm_unavailable:" in reason, (
+            f"TRA-D7-007: expected reason to contain 'llm_unavailable:', got {reason!r}"
+        )
+
+
 # =========================================================================
 # TRA-002 — Module registry wired into kernel (not hard-coded ZHENModule)
 # =========================================================================

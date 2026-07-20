@@ -119,12 +119,15 @@ def test_l4_forensic_trace_emitted_at_l4(tmp_path: Path):
     base = BootstrapConfig.from_yaml(cfg)
     # BootstrapConfig is frozen (TRA-018); use model_copy for overrides.
     # Set base_dir=tmp_path for the path-safety validator (TRA-014).
+    # TRA-D7-006 (round 7): override cache_directory so the test uses an
+    # isolated temp dir instead of the shared ./cache from config.yaml.
     base = base.model_copy(
         update={
             "base_dir": str(tmp_path),
             "conformance_level": ConformanceLevel.L4_FORENSIC,
             "audit_trace": str(tmp_path / "audit.jsonl"),
             "compilation_dir": str(tmp_path / "artifacts"),
+            "cache_directory": str(tmp_path / "cache"),
         }
     )
     kernel = TRAKernel(base)

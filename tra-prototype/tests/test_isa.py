@@ -135,7 +135,7 @@ def test_build_entity_table_immutable():
 # --- TRANSLATE_SEGMENT ---
 
 
-def test_translate_segment_canonical_substitution():
+def test_translate_segment_canonical_substitution(tmp_path):
     ctx = _ctx()
     # Build glossary via the real instruction to populate ctx.
     ev = EvidenceRegistry()
@@ -146,7 +146,7 @@ def test_translate_segment_canonical_substitution():
         ev,
         _audit(),
     )
-    cache = TranslationCache("./cache", enabled=True)
+    cache = TranslationCache(str(tmp_path / "cache"), enabled=True)
     res = translate_segment("系统 成立。", ctx, cache, ev, _audit())
     assert isinstance(res, TranslationResult)
     assert "Confirmed" in res.translation
@@ -154,7 +154,7 @@ def test_translate_segment_canonical_substitution():
     # test_translate_segment_cache_hit_is_byte_identical.
 
 
-def test_translate_segment_cache_hit_is_byte_identical():
+def test_translate_segment_cache_hit_is_byte_identical(tmp_path):
     ctx = _ctx()
     ev = EvidenceRegistry()
     build_glossary(
@@ -164,7 +164,7 @@ def test_translate_segment_cache_hit_is_byte_identical():
         ev,
         _audit(),
     )
-    cache = TranslationCache("./cache", enabled=True)
+    cache = TranslationCache(str(tmp_path / "cache"), enabled=True)
     r1 = translate_segment("成立 here", ctx, cache, ev, _audit())
     r2 = translate_segment("成立 here", ctx, cache, ev, _audit())
     assert r2.cache_hit is True
@@ -375,7 +375,7 @@ def test_verify_output_structural_mismatch_is_blocking():
 # --- Phase 4 integration: module rule layer fires via ISA ------------
 
 
-def test_translate_segment_applies_zh_rule_layer():
+def test_translate_segment_applies_zh_rule_layer(tmp_path):
     ctx = _ctx()
     ev = EvidenceRegistry()
     build_glossary(
@@ -385,7 +385,7 @@ def test_translate_segment_applies_zh_rule_layer():
         ev,
         _audit(),
     )
-    cache = TranslationCache("./cache", enabled=True)
+    cache = TranslationCache(str(tmp_path / "cache"), enabled=True)
     res = translate_segment("系统成立。", ctx, cache, ev, _audit())
     # Parataxis->hypotaxis rule layer resolves topic-comment to subject-predicate.
     assert "The system is Confirmed" in res.translation

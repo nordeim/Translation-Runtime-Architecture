@@ -12,6 +12,8 @@ validation pass that raises BrokenMarkdown for spec-defined malformed cases
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from tra.diagnostics import AuditTrail
 from tra.exceptions import BrokenMarkdown
@@ -19,11 +21,12 @@ from tra.isa import analyze_document
 from tra.memory import RuntimeContext
 
 
-def test_unclosed_code_fence_raises_broken_markdown() -> None:
+def test_unclosed_code_fence_raises_broken_markdown(tmp_path: Path) -> None:
     """TRA-071: an unclosed fenced code block must raise BrokenMarkdown,
     not be silently parsed leniently by markdown-it-py."""
     ctx = RuntimeContext()
-    audit = AuditTrail("/tmp/test_tra071.jsonl")
+    # TRA-D7-008 (round 7): use tmp_path instead of hardcoded /tmp/test_tra071.jsonl
+    audit = AuditTrail(str(tmp_path / "test_tra071.jsonl"))
     # Source with an unclosed code fence — markdown-it-py parses this
     # leniently (treats the rest of the doc as code), but the TRA spec
     # requires BrokenMarkdown for malformed structure.
@@ -32,10 +35,11 @@ def test_unclosed_code_fence_raises_broken_markdown() -> None:
         analyze_document(source, ctx, audit)
 
 
-def test_closed_code_fence_does_not_raise() -> None:
+def test_closed_code_fence_does_not_raise(tmp_path: Path) -> None:
     """TRA-071: a properly closed code fence must NOT raise BrokenMarkdown."""
     ctx = RuntimeContext()
-    audit = AuditTrail("/tmp/test_tra071_ok.jsonl")
+    # TRA-D7-008 (round 7): use tmp_path instead of hardcoded /tmp/test_tra071_ok.jsonl
+    audit = AuditTrail(str(tmp_path / "test_tra071_ok.jsonl"))
     source = "# Test\n\n```python\ndef foo():\n    pass\n```\n"
     # Must not raise.
     profile, smap = analyze_document(source, ctx, audit)
