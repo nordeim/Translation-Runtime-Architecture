@@ -340,7 +340,8 @@ def build_entity_table(
     Invariant: entities excluded from translation; casing/punctuation preserved.
     Failure Condition: ENTITY_AMBIGUITY (when a token matches multiple
     entity patterns and entity_type_hint returns None — logged via
-    recover_entity_ambiguity, non-halting).
+    recover_entity_ambiguity AND emitted as an EXCEPTION_HANDLER audit
+    record, non-halting).
 
     TRA-038 (round 4 remediation): when a token matches multiple entity
     patterns (e.g., both ACRONYM_RE and PRODUCT_RE) AND the module's
@@ -350,6 +351,17 @@ def build_entity_table(
     This surfaces ambiguous tokens to the L4 audit trail without halting
     the pipeline — the entity table still completes with the best-guess
     classification.
+
+    TRA-A7-004 (round 7 remediation): previously this function called
+    `recover_entity_ambiguity(...)` directly, which populated
+    unresolved_ambiguities but did NOT emit an EXCEPTION_HANDLER audit
+    record (the L4 audit trail was incomplete — only the ambiguity_register
+    captured the decision point). Fix: also emit an EXCEPTION_HANDLER
+    audit record via `audit.append(...)` so the audit_trace.jsonl captures
+    the decision point with severity + action + detail, matching the
+    pattern used by UnknownTerm in translate_segment. The function still
+    does NOT raise — the entity is still added to the table, preserving
+    the non-halting design.
     """
     from .recovery import recover_entity_ambiguity
     from .utils import ACRONYM_RE, PRODUCT_RE, VERSION_RE
@@ -382,10 +394,30 @@ def build_entity_table(
                 if pat.fullmatch(ent.name)
             ]
             if len(pattern_matches) > 1:
-                # Log the ambiguity without raising — the recovery procedure
-                # adds it to unresolved_ambiguities so the L4 audit trail
-                # captures the decision point.
-                recover_entity_ambiguity(ent.name, ctx.unresolved_ambiguities)
+                # TRA-A7-004 (round 7): call recover_entity_ambiguity (which
+                # adds to unresolved_ambiguities with WARNING severity) AND
+                # emit an EXCEPTION_HANDLER audit record so the audit trail
+                # captures the decision point. Previously only the recovery
+                # procedure was called — the EXCEPTION_HANDLER audit record
+                # was missing (L4 forensic gap). The function does NOT raise
+                # — the entity is still added to the table below, preserving
+                # the non-halting design.
+                report = recover_entity_ambiguity(ent.name, ctx.unresolved_ambiguities)
+                audit.append(
+                    "EXCEPTION_HANDLER",
+                    report.code,
+                    [],
+                    artifact_snapshot={
+                        "severity": report.severity.value,
+                        "action": report.action.value,
+                        "detail": report.detail,
+                        "source_term": ent.name,
+                        "reason": (
+                            f"Token matches {len(pattern_matches)} entity "
+                            f"patterns: {pattern_matches}"
+                        ),
+                    },
+                )
         final = ent.model_copy(
             update={
                 "type": hint if hint is not None else ent.type,

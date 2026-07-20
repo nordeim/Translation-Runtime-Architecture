@@ -4201,44 +4201,81 @@ class TestTRA_A5_003_ExceptionsRoutedThroughKernelRecover:
         )
 
     def test_entity_ambiguity_emits_exception_handler_audit_record(self) -> None:
-        """RED: When build_entity_table encounters a token matching multiple
-        entity patterns with no module hint, the audit trail should contain
-        an EXCEPTION_HANDLER record with exception_code='ENTITY_AMBIGUITY'."""
+        """RED (strengthened R7): When build_entity_table encounters a token
+        matching multiple entity patterns with no module hint, the audit trail
+        MUST contain an EXCEPTION_HANDLER record with exception_code=
+        'ENTITY_AMBIGUITY'.
+
+        R7 D7-002 fix: the previous version of this test was vacuous — it
+        said "We don't strictly require ENTITY_AMBIGUITY on this particular
+        input" and only asserted the absence of a `direct_call` marker (which
+        the production code never emits). The test passed regardless of
+        whether EntityAmbiguity was raised, recovered, or emitted as an
+        EXCEPTION_HANDLER record.
+
+        R7 A7-004 fix: production code at `tra/isa.py:388` calls
+        `recover_entity_ambiguity(...)` directly instead of raising
+        `EntityAmbiguity(...)`. The kernel's `_recover` dispatcher never
+        fires for this exception type, so no EXCEPTION_HANDLER audit record
+        is emitted. This test will RED until the production code is fixed
+        to `raise EntityAmbiguity(...)`.
+        """
+        import json
+        import os
+
         from tra.config import BootstrapConfig
         from tra.kernel import TRAKernel
 
+        # Use a fresh temp audit file.
+        audit_fd, audit_path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(audit_fd)
+        os.unlink(audit_path)
         cfg = BootstrapConfig.from_yaml("config.yaml").model_copy(
-            update={"cache_directory": tempfile.mkdtemp() + "/cache"}
+            update={
+                "audit_trace": audit_path,
+                "cache_directory": tempfile.mkdtemp() + "/cache",
+            }
         )
         kernel = TRAKernel(cfg)
-        # Source with a token that matches multiple entity patterns.
-        # "RustVMM" matches PRODUCT_RE (PascalCase) AND could match an
-        # acronym. The ZH-EN module's entity_type_hint returns None for
-        # tokens it doesn't recognize, so the ambiguity is logged.
-        # We need to find a token that matches >= 2 patterns.
-        # ACRONYM_RE typically matches all-caps; PRODUCT_RE matches PascalCase.
-        # A token like "API" matches ACRONYM_RE; "ApiV1" matches PRODUCT_RE.
-        # To match BOTH: a token like "RustVMM" (PascalCase + ending caps).
-        # However, the regexes are anchored, so we need to verify what matches.
-        # For now, use a source that has a clearly ambiguous token.
-        source = "RustVMM v0.5.0"
+        # Source with a token that matches BOTH PRODUCT_RE and ACRONYM_RE.
+        # Verified at HEAD 6d3144a: 'API' matches both patterns.
+        # The ZH-EN module's entity_type_hint returns None for tokens it
+        # doesn't recognize, so the ambiguity is logged.
+        source = "The API requires v0.5.0."
         kernel.run(source)
 
+        # Read the audit trail.
         audit_records = []
-        with open(cfg.audit_trace, encoding="utf-8") as f:
+        with open(audit_path, encoding="utf-8") as f:
             for line in f:
-                audit_records.append(__import__("json").loads(line))
+                audit_records.append(json.loads(line))
 
-        # We don't strictly require ENTITY_AMBIGUITY on this particular input
-        # (it depends on regex overlap), but if any exception record exists,
-        # its exception_code should match a routable type.
-        # The real assertion: no direct recover_* bypass should occur.
-        # Check that no RECORD has a 'recovered_via_direct_call' marker.
-        for r in audit_records:
-            snapshot = r.get("artifact_snapshot", {})
-            assert "direct_call" not in str(snapshot).lower(), (
-                f"TRA-A5-003: found record suggesting direct recover_* call: {r}"
-            )
+        exception_records = [
+            r for r in audit_records if r.get("isa_instruction") == "EXCEPTION_HANDLER"
+        ]
+        entity_ambiguity_records = [
+            r for r in exception_records if r.get("input_hash") == "ENTITY_AMBIGUITY"
+        ]
+        assert entity_ambiguity_records, (
+            "TRA-A7-004: EntityAmbiguity should emit an EXCEPTION_HANDLER "
+            "audit record with input_hash='ENTITY_AMBIGUITY'. Got "
+            f"{len(exception_records)} EXCEPTION_HANDLER records, "
+            f"{len(entity_ambiguity_records)} with ENTITY_AMBIGUITY code. "
+            f"All records: {[r.get('isa_instruction') for r in audit_records]}"
+        )
+        # R7 D7-002: verify the record's content matches Spec §6.
+        snapshot = entity_ambiguity_records[0].get("artifact_snapshot", {})
+        assert snapshot.get("severity") == "WARNING", (
+            f"TRA-A7-004: ENTITY_AMBIGUITY severity must be WARNING per Spec §6, "
+            f"got {snapshot.get('severity')!r}"
+        )
+        assert (
+            snapshot.get("action") == "PRESERVE_SOURCE"
+            or snapshot.get("action") == "TREAT_AS_ENTITY"
+        ), (
+            f"TRA-A7-004: ENTITY_AMBIGUITY action must be TREAT_AS_ENTITY "
+            f"(or PRESERVE_SOURCE per recovery.py), got {snapshot.get('action')!r}"
+        )
 
     def test_unknown_term_still_appears_in_ambiguity_register(self) -> None:
         """SANITY: After the refactor, the L4 ambiguity_register should

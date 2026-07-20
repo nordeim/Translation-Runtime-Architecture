@@ -126,7 +126,14 @@ class TestE2EToTranslateL3:
     def test_audit_trail_has_canonical_isa_sequence(self, tmp_path: Path) -> None:
         """The audit trail must contain the canonical ISA instruction
         sequence: ANALYZE_DOCUMENT → BUILD_GLOSSARY → BUILD_ENTITY_TABLE →
-        TRANSLATE_SEGMENT → VERIFY_OUTPUT → VERIFY_OUTPUT (double at L3+)."""
+        TRANSLATE_SEGMENT → VERIFY_OUTPUT → VERIFY_OUTPUT (double at L3+).
+
+        R7 A7-004: EXCEPTION_HANDLER records (emitted by build_entity_table
+        for ENTITY_AMBIGUITY) are interleaved between BUILD_GLOSSARY and
+        BUILD_ENTITY_TABLE. Filter them out to verify the canonical
+        lifecycle sequence; the EXCEPTION_HANDLER records are verified
+        separately by test_exception_handler_records_emitted_for_ambiguity.
+        """
         source = _load_source()
         manual = _load_manual_translation()
         cfg = _make_cfg(tmp_path, ConformanceLevel.L3_STRICT)
@@ -134,8 +141,12 @@ class TestE2EToTranslateL3:
         kernel, _target = _run_kernel_with_manual_llm(cfg, source, manual)
 
         records = kernel.audit._buffer
-        isa_sequence = [r.isa_instruction for r in records]
-        # Expected: 6 records at L3 (double VERIFY_OUTPUT from the L3 gate).
+        # Filter out EXCEPTION_HANDLER records (side-channel, not lifecycle).
+        lifecycle_records = [
+            r for r in records if r.isa_instruction != "EXCEPTION_HANDLER"
+        ]
+        isa_sequence = [r.isa_instruction for r in lifecycle_records]
+        # Expected: 6 lifecycle records at L3 (double VERIFY_OUTPUT from L3 gate).
         expected = [
             "ANALYZE_DOCUMENT",
             "BUILD_GLOSSARY",
@@ -145,8 +156,50 @@ class TestE2EToTranslateL3:
             "VERIFY_OUTPUT",  # L3 gate's second verify
         ]
         assert isa_sequence == expected, (
-            f"audit trail ISA sequence {isa_sequence} does not match "
-            f"expected {expected}"
+            f"audit trail lifecycle ISA sequence {isa_sequence} does not match "
+            f"expected {expected}. Full sequence (incl. EXCEPTION_HANDLER): "
+            f"{[r.isa_instruction for r in records]}"
+        )
+
+    def test_exception_handler_records_emitted_for_ambiguity(
+        self, tmp_path: Path
+    ) -> None:
+        """R7 A7-004: build_entity_table must emit EXCEPTION_HANDLER audit
+        records for ENTITY_AMBIGUITY (one per ambiguous token). Previously
+        these records were missing — only unresolved_ambiguities captured
+        the decision point, breaking L4 forensic completeness.
+        """
+        source = _load_source()
+        manual = _load_manual_translation()
+        cfg = _make_cfg(tmp_path, ConformanceLevel.L3_STRICT)
+
+        kernel, _target = _run_kernel_with_manual_llm(cfg, source, manual)
+
+        records = kernel.audit._buffer
+        exception_records = [
+            r for r in records if r.isa_instruction == "EXCEPTION_HANDLER"
+        ]
+        entity_ambiguity_records = [
+            r for r in exception_records if r.input_hash == "ENTITY_AMBIGUITY"
+        ]
+        # to_translate.md contains multiple ambiguous tokens (API, VM, etc.
+        # that match both ACRONYM_RE and PRODUCT_RE). At least one
+        # EXCEPTION_HANDLER record with ENTITY_AMBIGUITY code must be present.
+        assert entity_ambiguity_records, (
+            "TRA-A7-004: expected at least one EXCEPTION_HANDLER record with "
+            "input_hash='ENTITY_AMBIGUITY' in the audit trail. Got "
+            f"{len(exception_records)} EXCEPTION_HANDLER records, "
+            f"{len(entity_ambiguity_records)} with ENTITY_AMBIGUITY code."
+        )
+        # Verify the record's content matches Spec §6.
+        snapshot = entity_ambiguity_records[0].artifact_snapshot or {}
+        assert snapshot.get("severity") == "WARNING", (
+            f"TRA-A7-004: ENTITY_AMBIGUITY severity must be WARNING per Spec §6, "
+            f"got {snapshot.get('severity')!r}"
+        )
+        assert snapshot.get("action") == "TREAT_AS_ENTITY", (
+            f"TRA-A7-004: ENTITY_AMBIGUITY action must be TREAT_AS_ENTITY, "
+            f"got {snapshot.get('action')!r}"
         )
 
     def test_zero_blocking_diagnostics_at_l3(self, tmp_path: Path) -> None:
