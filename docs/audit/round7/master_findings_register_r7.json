@@ -1,0 +1,1227 @@
+[
+  {
+    "id": "TRA-A7-002",
+    "track": "A7,C7,D7",
+    "title": "Kernel's _repair_loop does NOT pass segment_index to repair_segment (PERSISTENT WARNING, TRA-001 Phase 8 residual)",
+    "severity": "WARNING",
+    "category": "Spec Conformance / L4 Forensic Traceability (§8 L4, TRA-001 Phase 8)",
+    "evidence": "- `tra/isa.py:1153-1162` — `repair_segment(...)` signature includes `segment_index: int = 0` with default 0. Parameter exists and is plumbed through to `RepairAttempt.segment_index` at `:1226`. - `tra/kernel.py:682-691` — the kernel's `_repair_loop` calls `repair_segment(target, src, current, self.ctx, self.evidence, self.audit, attempt=attempt, max_retries=max_retries)` WITHOUT `segment_index`. Parameter defaults to 0. - `tra/memory.py:266` — `RepairAttempt.segment_index` field description reads \"Index of the repaired leaf segment\", implying meaningful per-leaf index. At HEAD, this field is always 0 in the production CLI path. - `tra/kernel.py:521-667` — the per-leaf translation refactor DOES walk `ctx.structural_map.iter_leaf_segments()` and call `translate_segment` per leaf. The leaf index `_idx` is available in the loop but not propagated to a per-segment repair queue. - **Reproduction (executed at HEAD `6d3144a`):** ran `kernel.run(\"# Heading\\n\\nParagraph with 成立 term.\\n\")` and inspected `kernel.ctx.repair_history`. With a terminology-repair-triggering source, `RepairAttempt.segment_index == 0` regardless of which leaf was repaired. - Spec §8 L4_FORENSIC: \"Every translation decision is logged with its Policy justification.\" A repair record with `segment_index=0` cannot be correlated to the specific leaf segment that was repaired, defeating the per-leaf forensic traceability goal of TRA-001 Phase 8.",
+    "detail": "Round 5 Batch H (`f782043`) implemented TRA-001 Phase 8 per-leaf translation. The refactor added `segment_index` as a `repair_segment` parameter so that `RepairAttempt.segment_index` could record which leaf was repaired. **However, the kernel's `_repair_loop` was not updated to pass `segment_index`** — it still calls `repair_segment(...)` with the default 0. The repair loop works on whole-document diagnostics (from `verify_output`), not per-segment, so the leaf index is not naturally available at the repair call site. To plumb it correctly, the repair loop would need to be restructured to track which leaf each diagnostic applies to (e.g., by adding `segment_index` to `Diagnostic` or by walking the structural map to find the offending leaf). || Also cited by TRA-A7-009 (A7): Per-leaf segment translation works (TRA-001 Phase 8) — VERIFIED HOLDING (POSITIVE VERIFICATION with TRA-A7-002 residual) | Also cited by TRA-C7-004 (C7): SKILL.md §7 test-class list has phantom B4-009 entry and missing (×2) annotation on TRA-001 (PERSISTENT INFO, carry-over from C6-007) | Also cited by TRA-D7-003 (D7): Per-leaf translation + LLM interaction untested (PERSISTENT INFO, carry-over from D6-011) | Also cited by TRA-D7-011 (D7): Per-leaf translation tests verified holding (TRA-001 / TRA-A5-001) (POSITIVE VERIFICATION)",
+    "suggested_fix": "Add a `segment_index: int | None = None` field to `Diagnostic` so `verify_output` can record which leaf a violation belongs to (matched by string-contains against `ctx.structural_map.iter_leaf_segments()`). `_repair_loop` then passes `diagnostic.segment_index or 0` to `repair_segment`. Add a regression test with a list-heavy source that triggers multiple distinct repairs and asserts `RepairAttempt.segment_index` varies.",
+    "round6_status": "persistent residual (introduced by R5 Batch H commit `f782043` — added per-leaf translation + `segment_index` parameter, but kernel call site not updated)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-A7-002",
+      "TRA-A7-009",
+      "TRA-C7-004",
+      "TRA-D7-003",
+      "TRA-D7-011"
+    ],
+    "root_id": "TRA-001"
+  },
+  {
+    "id": "TRA-A7-001",
+    "track": "A7",
+    "title": "Cache-hit suppresses EXCEPTION_HANDLER records for UnknownTerm (PERSISTENT WARNING, carry-over from A6-001)",
+    "severity": "WARNING",
+    "category": "Spec Conformance / L4 Audit-Trail Completeness (§7, §8 L4)",
+    "evidence": "- `tra/isa.py:461-465` — `cached = cache.get(cache_key); if cached is not None: audit.append(\"TRANSLATE_SEGMENT\", cache_key, cached.evidence_ids); return cached`. Cache-hit returns immediately; does NOT re-emit EXCEPTION_HANDLER records produced on cache-miss path. - `tra/isa.py:558-580` — on cache miss, `_rule_translate` returns `unknown_tokens` which `translate_segment` loops over to emit one EXCEPTION_HANDLER audit record per token. Emitted ONLY on cache miss. - `tra/cache.py:104-111` — `TranslationResult` model stores only `translation`, `evidence_ids`, `cache_hit`, `created_at`. Does NOT store `audit_side_effects` or any unknown-token metadata. Cache cannot reproduce EXCEPTION_HANDLER records on subsequent hit. - **Reproduction (executed at HEAD `6d3144a`):** ```python # Cold cache, source with unknown CJK token \"项目概述\" # Run 1 audit trail: 1 EXCEPTION_HANDLER + 1 TRANSLATE_SEGMENT # Run 2 (warm cache) audit trail: 0 EXCEPTION_HANDLER + 1 TRANSLATE_SEGMENT ``` The second run silently drops the EXCEPTION_HANDLER record for the unknown token. - `config.yaml:14-16` — `cache: enabled: true` by default. Cache is active in the production CLI path. - Spec §8 L4_FORENSIC: \"Level 3 + Line-by-line evidence tracing. Every translation decision is logged with its Policy justification.\" An L4 forensic auditor inspecting `audit_trace.jsonl` from a cache-warm run would miss UnknownTerm decision points that occurred on the first (cold-cache) run.",
+    "detail": "Round 5 Batch 2 (`36246bb`) wired UnknownTerm to emit EXCEPTION_HANDLER audit records via `audit.append(...)` in `translate_segment`. However, the cache-hit early-return at `:461-465` bypasses this emission entirely. The result: an L4 audit trail is complete only on the first run after a cache invalidation; subsequent runs (cache hits) silently drop the EXCEPTION_HANDLER records. **No existing test catches this** because tests use `tempfile.mkdtemp()` cache dirs that are empty per-test (each test is a cold-cache run). The defect manifests only when the same source is translated twice with a shared cache.",
+    "suggested_fix": "Extend `TranslationResult` with `audit_side_effects: list[dict] = []` field that captures EXCEPTION_HANDLER records emitted during the cache-miss translation. On cache hit, re-emit them via `audit.append(...)`. Add a regression test that translates the same source twice with a shared cache and asserts both runs produce identical EXCEPTION_HANDLER record counts.",
+    "round6_status": "persistent (root cause pre-existed in `tra/isa.py:461-468` cache-hit early return since Phase 2/3; A5-003 made the gap visible by adding EXCEPTION_HANDLER records on cache miss)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-A7-001"
+    ],
+    "root_id": "TRA-A7-001"
+  },
+  {
+    "id": "TRA-B7-001",
+    "track": "B7",
+    "title": "mutmut 3.6+ deprecated config keys — `paths_to_mutate` and `tests_dir` (NEW WARNING, partial carry-over from B6-008)",
+    "severity": "WARNING",
+    "category": "Code Quality / Tooling Configuration (TRA-D5-011, TRA-094)",
+    "evidence": "- `tra-prototype/pyproject.toml:62-64`: ```toml [tool.mutmut] paths_to_mutate = [\"tra\"] # ← deprecated since mutmut 3.6 tests_dir = [\"tests\"] # ← deprecated since mutmut 3.6 max_stack_depth = 5 ``` - Running `mutmut run --help` at HEAD `6d3144a` produces: ``` UserWarning: The config paths_to_mutate is deprecated. Please rename it to source_paths UserWarning: The config tests_dir is deprecated. Please add the path to pytest_add_cli_args_test_selection instead ``` - mutmut 4.x (when released) will likely remove the deprecated keys entirely, breaking `mutmut run` again. - The existing static config-presence test (`test_outstanding_findings.py::TestTRA_D5_011_MutationTestingConfig`) only checks that the `[tool.mutmut]` section exists — it does NOT verify the keys are non-deprecated.",
+    "detail": "The R6 Batch 1 fix was incomplete: it addressed the immediate crash (string vs list type error) but left the deprecated key names in place. The deprecation warnings are noisy and signal an impending break.",
+    "suggested_fix": "Rename `paths_to_mutate` → `source_paths` and remove `tests_dir` (mutmut 3.6+ auto-detects pytest). Add a regression test that runs `mutmut run --help` and asserts zero `DeprecationWarning` output.",
+    "round6_status": "partial (R6 Batch 1 commit `6d3144a` fixed the string→list crash but did NOT rename the deprecated keys)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-B7-001"
+    ],
+    "root_id": "TRA-B7-001"
+  },
+  {
+    "id": "TRA-B7-002",
+    "track": "B7",
+    "title": "`Authorization: Bearer <token>` regex leaks the token into audit trail (PERSISTENT WARNING escalated from B6-009 INFO)",
+    "severity": "WARNING",
+    "category": "Security / OWASP A09 (Security Logging and Monitoring Failures)",
+    "evidence": "- `tra/kernel.py:110-114`: ```python _SECRET_RE = re.compile( r\"(sk-[A-Za-z0-9]{8,}|Bearer\\s+[A-Za-z0-9._-]+|\" r\"Authorization:\\s*[^\\s,;]+|api[_-]?key['\\\"]?\\s*[:=]\\s*['\\\"]?[^\\s'\\\"]+)\", re.IGNORECASE, ) ``` - The third alternative `Authorization:\\s*[^\\s,;]+` matches `Authorization: Bearer` (up to the first whitespace), then the regex substitution replaces ONLY that matched portion with `[REDACTED]`. The actual token (which follows `Bearer `) is NOT matched and is NOT redacted. - **Dynamic reproduction (executed at HEAD `6d3144a`):** ```python from tra.kernel import _sanitize_exc_repr class FakeException(Exception): pass exc = FakeException('HTTP 401: Authorization: Bearer eyJhbGc.secrettoken123') print(_sanitize_exc_repr(exc)) # Output: FakeException('HTTP 401: [REDACTED] eyJhbGc.secrettoken123') # ^^^^^^^^^ # JWT token LEAKED into audit trail ``` - The first alternative `Bearer\\s+[A-Za-z0-9._-]+` DOES match `Bearer eyJhbGc.secrettoken123` correctly, BUT the regex engine tries alternatives left-to-right and the `Authorization:` alternative matches first (at the position before `Bearer`), so it wins.",
+    "detail": "This is a real OWASP A09 defect. If an LLM client raises an exception containing `Authorization: Bearer <JWT>` (common when the LLM rejects credentials), the JWT token is persisted verbatim in `audit_trace.jsonl` via the `artifact_snapshot.reason` field at `tra/isa.py:540`. An attacker with read access to the audit trail could extract the JWT and reuse it.",
+    "suggested_fix": "Rewrite the regex so the `Authorization:` alternative also consumes the credential that follows. Two options: 1. Reorder alternatives so `Bearer\\s+[A-Za-z0-9._-]+` is tried first (simplest, but only covers Bearer scheme). 2. Replace the `Authorization:` alternative with `Authorization:\\s*\\S+(?:\\s+\\S+)?` to consume the scheme AND the credential (covers `Basic`, `Digest`, etc.). Add a regression test that asserts `_sanitize_exc_repr(FakeException('Authorization: Bearer eyJ...'))` produces NO occurrence of `eyJ...` in the output.",
+    "round6_status": "persistent (R6 tracked as INFO B6-009; R7 escalates to WARNING because dynamic reproduction confirms the token is leaked, not just potentially leaked)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-B7-002"
+    ],
+    "root_id": "TRA-B7-002"
+  },
+  {
+    "id": "TRA-C7-001",
+    "track": "C7",
+    "title": "implementation_plan.md dependencies table pinned to stale HEAD `805a8f8` (PERSISTENT WARNING, carry-over from C6-008)",
+    "severity": "WARNING",
+    "category": "Doc-vs-Code Consistency / Stale HEAD Reference",
+    "evidence": "- `implementation_plan.md:367` — `> **Updated at HEAD `805a8f8`** (Round 4 audit). The 6 unused dependencies...` - Actual HEAD: `6d3144a` (4 commits past `805a8f8`). The deps table content is still accurate (6 runtime + 4 dev deps), but the HEAD pin is stale. - `implementation_plan.md:374-394` — dependencies table content is correct (matches `tra-prototype/pyproject.toml:10-27` at HEAD `6d3144a`).",
+    "detail": "The stale HEAD pin misleads readers into thinking the table might be out of date. The content is accurate; only the pin needs updating.",
+    "suggested_fix": "Replace `Updated at HEAD `805a8f8` (Round 4 audit)` with `Updated at HEAD `6d3144a` (Round 7 audit)`. The dependencies themselves have not changed since R3 remediation commit `a3cd2c1`.",
+    "round6_status": "persistent (carry-over from C6-008; R6 Batch 1 did not touch implementation_plan.md's dependencies table)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-C7-001"
+    ],
+    "root_id": "TRA-C7-001"
+  },
+  {
+    "id": "TRA-C7-002",
+    "track": "C7",
+    "title": "README.md missing Round 5 and Round 6 audit references (PERSISTENT WARNING, carry-over from C6-009)",
+    "severity": "WARNING",
+    "category": "Doc-vs-Code Consistency / Missing Audit Cross-Reference",
+    "evidence": "- `README.md` — `rg -n \"Round [0-9]\" README.md` returns 0 hits. README.md does not mention ANY audit rounds. - `AGENTS.md:44-52` — has audit deliverables table mentioning Round 1-5. - `CLAUDE.md:59` — mentions Round 1-5 deliverables. - `docs/audit/round5/README.md` and `docs/audit/round6/README.md` exist but are not linked from the top-level README.md.",
+    "detail": "README.md is the first file a new contributor reads. Missing audit cross-references force them to discover the audit history by browsing `docs/audit/`. R6 added Round 6 deliverables but README.md was not updated.",
+    "suggested_fix": "Add a \"Audit History\" section to README.md listing all 7 audit rounds (R1-R7) with one-line summaries and links to each round's README.",
+    "round6_status": "persistent (carry-over from C6-009; R6 Batch 1 did not touch README.md audit references)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-C7-002"
+    ],
+    "root_id": "TRA-C7-002"
+  },
+  {
+    "id": "TRA-C7-003",
+    "track": "C7",
+    "title": "status.md banner does not pin the latest HEAD hash (PERSISTENT WARNING, carry-over from C6-011)",
+    "severity": "WARNING",
+    "category": "Doc-vs-Code Consistency / Stale Banner",
+    "evidence": "- `status.md:1-3` — banner reads: `> **⚠️ STALE — historical session log.** This file is frozen at commit `4d97aa1` and references \"103 pytest passing\". The actual test count at the latest HEAD is **309 across 16 test files**...` - The banner mentions \"309 across 16 test files\" (correct at HEAD `6d3144a`) but does NOT pin the specific HEAD hash. A reader cannot tell whether \"latest HEAD\" means `6d3144a`, `c4ecd41`, or something earlier. - The banner also doesn't mention that Round 6 + Round 7 audits have occurred since the file was frozen.",
+    "detail": "The status.md file is intentionally frozen (historical context only), but the banner that warns about its staleness should pin the current HEAD so readers know how stale \"stale\" is.",
+    "suggested_fix": "Update banner to: `> **⚠️ STALE — historical session log.** This file is frozen at commit `4d97aa1` and references \"103 pytest passing\". The actual state at HEAD `6d3144a` (Round 7 audit, 2026-07-21) is **309 tests across 16 test files** + L3 CONFORMANT. See `CLAUDE.md` → \"Prototype engine status\" for current state and `docs/audit/round7/` for the latest audit.`",
+    "round6_status": "persistent (carry-over from C6-011)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-C7-003"
+    ],
+    "root_id": "TRA-C7-003"
+  },
+  {
+    "id": "TRA-D7-001",
+    "track": "D7",
+    "title": "15 hardcoded absolute paths in test_outstanding_findings.py (PERSISTENT WARNING, carry-over from D6-003)",
+    "severity": "WARNING",
+    "category": "Test Suite / Portability",
+    "evidence": "- `rg -n \"/home/z/my-project\" tests/test_outstanding_findings.py` → 15 hits. - Sample lines: - `:3653` — `cwd=\"/home/z/my-project/Translation-Runtime-Architecture/tra-prototype\"` - `:3729` — `\"/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/kernel.py\"` - `:4210` — `\"/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/tra/isa.py\"` - `:5007` — `\"/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/pyproject.toml\"` - These break test portability across containers/checkouts. Tests fail if the repo is cloned to a different path. - At HEAD `6d3144a`, tests pass because the repo IS at `/home/z/my-project/Translation-Runtime-Architecture/`. But this is fragile.",
+    "detail": "The hardcoded paths are used in tests that verify file:line evidence (e.g., asserting a specific source file path appears in an audit record). The fix is to replace them with `Path(__file__).resolve().parent.parent` (the repo root) or a fixture that computes the path dynamically.",
+    "suggested_fix": "Replace all 15 hardcoded paths with `Path(__file__).resolve().parent.parent` (or a session-scoped fixture). Add a regression test that asserts no test file contains the literal string `/home/z/my-project/`.",
+    "round6_status": "persistent (carry-over from D6-003; R6 Batch 1 did not address)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D7-001"
+    ],
+    "root_id": "TRA-D7-001"
+  },
+  {
+    "id": "TRA-D7-002",
+    "track": "D7",
+    "title": "Vacuous test `test_entity_ambiguity_emits_exception_handler_audit_record` (PERSISTENT WARNING, carry-over from D6-004)",
+    "severity": "WARNING",
+    "category": "Test Suite / Vacuous Assertion",
+    "evidence": "- `tests/test_outstanding_findings.py:4120-4158` — `test_entity_ambiguity_emits_exception_handler_audit_record`: - Test name claims to assert \"entity_ambiguity_emits_exception_handler_audit_record\". - Test body (line 4149): `# We don't strictly require ENTITY_AMBIGUITY on this particular input`. The actual assertion (line 4156) only checks `\"direct_call\" not in str(snapshot).lower()` — i.e., it asserts the ABSENCE of a marker that the production code never emits. - The test passes vacuously regardless of whether EntityAmbiguity is raised, recovered, or emitted as an EXCEPTION_HANDLER record. - `tra/isa.py:388` — `recover_entity_ambiguity(ent.name, ctx.unresolved_ambiguities)` is called directly (never raises), so `route_exception`'s EntityAmbiguity branch is never exercised in production. See also TRA-A7-004.",
+    "detail": "The test was intended to verify that EntityAmbiguity emits an EXCEPTION_HANDLER audit record (mirroring the UnknownTerm fix from R5 Batch 2). But the assertion was weakened to \"we don't strictly require\" — making the test vacuous. The underlying production gap (TRA-A7-004) means the test cannot be strengthened until the production code is fixed.",
+    "suggested_fix": "First fix TRA-A7-004 (raise EntityAmbiguity instead of direct-calling recover_entity_ambiguity). Then strengthen the test to assert: (a) an EXCEPTION_HANDLER record with `exception_code='ENTITY_AMBIGUITY'` exists in the audit trail, (b) the record's `artifact_snapshot.severity == 'WARNING'`, (c) the record's `artifact_snapshot.action == 'PRESERVE_SOURCE'`.",
+    "round6_status": "persistent (carry-over from D6-004)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D7-002"
+    ],
+    "root_id": "TRA-D7-002"
+  },
+  {
+    "id": "TRA-B7-005",
+    "track": "B7,E7",
+    "title": "TRA-013 VERIFIED HOLDS — L4 audit trail byte-reproducible across cold-cache runs (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Spec Conformance / TRA-013 (§7)",
+    "evidence": "- Executed 2 cold-cache L4 runs of `to_translate.md` at HEAD `6d3144a`: ``` Run 1: rm -rf cache audit_trace.jsonl compilation_artifacts && python -c \"...\" Run 2: rm -rf cache audit_trace.jsonl compilation_artifacts && python -c \"...\" ``` - `audit_trace.jsonl` sha256: `d01e7bfa22db9b35...` × 2 (MATCH) - Output markdown: byte-identical across runs - The R6 Batch 1 fix (`audit_trace.jsonl` truncate mode in `TRAKernel.__init__`) closes the append-mode reproducibility gap that previously manifested on reused CLI default paths.",
+    "detail": " || Also cited by TRA-E7-003 (E7): TRA-013 byte-reproducibility HOLDS for cold-cache runs on isolated workdirs (POSITIVE VERIFICATION)",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-B6-001 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-B7-005",
+      "TRA-E7-003"
+    ],
+    "root_id": "TRA-013"
+  },
+  {
+    "id": "TRA-B7-012",
+    "track": "B7",
+    "title": "TRA-017 VERIFIED HOLDS — 6 runtime + 4 dev dependencies, no unused deps reintroduced (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Code Quality / Dependency Hygiene (TRA-017)",
+    "evidence": "- `tra-prototype/pyproject.toml:10-17` — 6 runtime deps: pydantic, markdown-it-py, diskcache, pyyaml, click, rich. - `tra-prototype/pyproject.toml:19-27` — 4 dev deps: pytest, ruff, mypy, mutmut. - Install footprint: ~15 packages (was ~70 before R3 remediation commit `a3cd2c1`). - No `litellm`, `structlog`, `pydantic-settings`, `mdit-py-plugins`, `black`, `pytest-asyncio` in deps.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-B6-016 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-B7-012"
+    ],
+    "root_id": "TRA-017"
+  },
+  {
+    "id": "TRA-A7-006",
+    "track": "A7",
+    "title": "KernelState has 9 states matching Spec §2.1; EXCEPTION_HANDLER/HALT_ERROR documented as intentional side-channel (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Spec Conformance / Kernel State Machine (§2.1)",
+    "evidence": "- `tra/kernel.py:77-85` — `KernelState(StrEnum)` defines exactly 9 states in spec order: BOOTSTRAP, INITIALIZE_RUNTIME, ANALYZE_DOCUMENT, BUILD_ARTIFACTS, EXECUTE_TRANSLATION, VERIFY_OUTPUT, REPAIR_IF_NEEDED, AUDIT_DIAGNOSTICS, EMIT_PAYLOAD. - `tra/kernel.py:89-99` — `_KERNEL_ORDER` list enforces canonical transition sequence. - `tra/kernel.py:52-75` — docstring documents the EXCEPTION_HANDLER/HALT_ERROR design decision (intentional side-channel action, not lifecycle state). Decision is pending spec clarification. - All 9 states match `TRA-SPECIFICATION.md` §2.1 stateDiagram exactly.",
+    "detail": "The 9-state enum + the design decision docstring together satisfy the spec §2.1 contract. The TRA-040 finding (EXCEPTION_HANDLER as state) remains pending spec clarification.",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-A6-006 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-A7-006"
+    ],
+    "root_id": "TRA-040"
+  },
+  {
+    "id": "TRA-B7-007",
+    "track": "B7",
+    "title": "TRA-076 VERIFIED HOLDS — LLM seam output routed through `sanitize_input` (POSITIVE VERIFICATION, OWASP A03)",
+    "severity": "INFO",
+    "category": "Security / OWASP A03 (Injection)",
+    "evidence": "- `tra/isa.py:470-475` — LLM output is sanitized via `sanitize_input` before being used. Chokepoint is single (no bypass path). - `tra/utils.py` `sanitize_input` — strips null bytes, BOM, bidi overrides, control characters.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-B6-003 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-B7-007"
+    ],
+    "root_id": "TRA-076"
+  },
+  {
+    "id": "TRA-B7-003",
+    "track": "B7",
+    "title": "`cache.get` backward-compat `else` branch re-opens pickle/dict path for legacy entries (PERSISTENT INFO, carry-over from B6-012)",
+    "severity": "INFO",
+    "category": "Security / OWASP A08 (Software and Data Integrity Failures)",
+    "evidence": "- `tra/cache.py:137-155`: ```python if isinstance(raw, str): # ... HMAC verification + JSON parsing ... else: # Backward compat: old pickle entries (dict). Migrate on next set. result = TranslationResult.model_validate(raw) ``` - The `else` branch accepts ANY non-string value from the cache (dict, list, int, pickle-deserialized object) and passes it directly to `TranslationResult.model_validate`. Pydantic's `model_validate` is safe (it doesn't execute arbitrary code), but the diskcache `get()` call at `:129` does use pickle deserialization for non-string values, which IS vulnerable to arbitrary code execution if an attacker can write to the cache directory. - `tra/cache.py:124` — `self._cache = diskcache.Cache(str(self.directory))`. diskcache uses pickle by default for non-string values. - OWASP A08: \"Software and data integrity failures\" — pickle deserialization of untrusted data is a known RCE vector.",
+    "detail": "The TRA-077 fix correctly stores new entries as HMAC-signed JSON strings, but the `else` branch retains backward compatibility with old pickle-format entries. An attacker who can write to the cache directory (e.g., via a path traversal in a different component, or via a shared cache directory on a multi-tenant system) could inject a malicious pickle payload that executes on the next `cache.get()`. The risk is low (requires write access to the cache directory) but non-zero. || Also cited by TRA-B7-008 (B7): TRA-077 VERIFIED HOLDS — Cache stores HMAC-prefixed JSON strings, not pickle (POSITIVE VERIFICATION, OWASP A08)",
+    "suggested_fix": "Remove the `else` branch entirely. Any non-string cache value should be treated as a cache miss (return `None`) and overwritten on the next `set()`. Add a regression test that writes a non-string value to the cache via `diskcache.Cache.set(key, {\"translation\": \"evil\"})` directly and asserts `TranslationCache.get(key)` returns `None`.",
+    "round6_status": "persistent (carry-over from B6-012)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-B7-003",
+      "TRA-B7-008"
+    ],
+    "root_id": "TRA-077"
+  },
+  {
+    "id": "TRA-B7-009",
+    "track": "B7",
+    "title": "TRA-078 partial coverage — Authorization header regex leaks token (NEW WARNING, see TRA-B7-002)",
+    "severity": "INFO",
+    "category": "Security / OWASP A09 (Security Logging and Monitoring Failures)",
+    "evidence": "- `tra/kernel.py:117-124` — `_sanitize_exc_repr` correctly redacts `sk-...` API keys and standalone `Bearer <token>` patterns. - **Gap:** `Authorization: <scheme> <credentials>` pattern leaks the credentials (see TRA-B7-002 for dynamic reproduction). - Tests: `test_outstanding_findings.py::TestTRA078SecretsRedaction` covers `sk-` and `Bearer ` but NOT `Authorization: Bearer <token>` (the vulnerable form).",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "partial (TRA-B6-005 verified the basic `_sanitize_exc_repr` works for `sk-` and `Bearer ` patterns; TRA-B7-002 identifies the `Authorization:` alternative gap)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-B7-009"
+    ],
+    "root_id": "TRA-078",
+    "finding_type_detail": "positive_verification (partial)"
+  },
+  {
+    "id": "TRA-B7-006",
+    "track": "B7,D7",
+    "title": "TRA-079 VERIFIED HOLDS — Cache HMAC-SHA256 rejects tampered entries (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Security / OWASP A08 (TRA-079)",
+    "evidence": "- `tra/cache.py:134-146` — HMAC verification on every cache read. Tampered entries (modified JSON, modified HMAC) return `None` (treated as cache miss). - `tests/test_outstanding_findings.py::TestTRA_B5_004_CacheHmacTamperedEntryRejected` — test passes at HEAD `6d3144a`.",
+    "detail": " || Also cited by TRA-D7-013 (D7): Cache HMAC tests verified holding (TRA-B5-004 / TRA-079) (POSITIVE VERIFICATION)",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-B6-002 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-B7-006",
+      "TRA-D7-013"
+    ],
+    "root_id": "TRA-079"
+  },
+  {
+    "id": "TRA-B7-011",
+    "track": "B7",
+    "title": "TRA-094 VERIFIED HOLDS — mutmut configured in pyproject.toml (POSITIVE VERIFICATION, with TRA-B7-001 residual)",
+    "severity": "INFO",
+    "category": "Code Quality / Mutation Testing (TRA-D5-011, TRA-094)",
+    "evidence": "- `tra-prototype/pyproject.toml:56-64` — `[tool.mutmut]` section present with `paths_to_mutate`, `tests_dir`, `max_stack_depth`. - `mutmut` is in dev deps (`pyproject.toml:26`). - `mutmut run --help` runs without crashing (deprecation warnings present, see TRA-B7-001). - Static config-presence test passes.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-B6-011 re-confirmed; TRA-B7-001 identifies deprecated key names)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-B7-011"
+    ],
+    "root_id": "TRA-094"
+  },
+  {
+    "id": "TRA-F7-001",
+    "track": "F7",
+    "title": "TRA-096 — `as_interface()` + `register()` + `TRAKernel(registry=)` works end-to-end (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Stub-Module Conformance / Module Registry",
+    "evidence": "- `tra/modules/registry.py` `ModuleRegistry.register()` accepts a `ModuleInterface` and validates its 7 `Callable` fields. - `tra/modules/base.py` `LanguageModuleProtocol` defines the Protocol. - `tra/modules/zh_en.py` `ZHENModule.as_interface()` returns a `ModuleInterface` that satisfies the Protocol. - `tra/kernel.py` `TRAKernel(cfg, registry=registry)` selects the module from the registry based on `config.language_pair`. - End-to-end test: `tests/test_modules.py::test_registry_end_to_end` passes.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-F6-001 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-F7-001"
+    ],
+    "root_id": "TRA-096"
+  },
+  {
+    "id": "TRA-F7-002",
+    "track": "F7",
+    "title": "TRA-099 — CLI `translate` auto-builds the default registry and passes `registry=registry` to `TRAKernel` (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Stub-Module Conformance / CLI Integration",
+    "evidence": "- `tra_cli.py` `translate` command calls `build_default_registry()` and passes the result to `TRAKernel(cfg, registry=registry)`. - CLI test: `tests/test_outstanding_findings.py::TestTRA_D5_017_CLIRunnerTests` passes.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-F6-002 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-F7-002"
+    ],
+    "root_id": "TRA-099"
+  },
+  {
+    "id": "TRA-A7-003",
+    "track": "A7",
+    "title": "Structural map creates duplicate leaf segments for list items (PERSISTENT INFO, carry-over from A6-003)",
+    "severity": "INFO",
+    "category": "Spec Conformance / Structural Map (§3 ANALYZE_DOCUMENT)",
+    "evidence": "- `tra/anchor.py` (via `build_structural_map`) — for each `- item` list item, the structural map creates BOTH a `NodeKind.LIST_ITEM` node with `text=\"item\"` AND a `NodeKind.PARAGRAPH` child node with `text=\"item\"` (same text). Both are yielded by `iter_leaf_segments()`. - **Reproduction (executed at HEAD `6d3144a`):** ``` source: \"# H\\n\\n- item one\\n- item two\\n\" leaf segments: [0] heading: 'H' [1] list_item: 'item one' [2] paragraph: 'item one' ← duplicate text [3] list_item: 'item two' [4] paragraph: 'item two' ← duplicate text TRANSLATE_SEGMENT records emitted by kernel: 5 ``` The 2nd and 4th leaf translations are cache hits (same source text → same cache key), so they don't double-translate, but they DO emit additional TRANSLATE_SEGMENT audit records. - `tra/kernel.py:585-614` — `_execute_translation` iterates `iter_leaf_segments()` and calls `translate_segment` per leaf. Each duplicate leaf produces an additional TRANSLATE_SEGMENT audit record (cache-hit case at `:461-465`). - Spec §3 ANALYZE_DOCUMENT Invariant: \"Structural Map node count must equal Source Document node count.\" The structural map's node_count is correct, but `iter_leaf_segments()` yields both LIST_ITEM and its PARAGRAPH child as translatable leaves, producing duplicate work + audit noise.",
+    "detail": "The structural map builder treats each list item as a `LIST_ITEM` node containing a `PARAGRAPH` child with the same text. `iter_leaf_segments()` then yields both as translatable leaves. A list-heavy document would produce roughly 2× the expected TRANSLATE_SEGMENT records.",
+    "suggested_fix": "In `StructuralMap.iter_leaf_segments()`, skip a PARAGRAPH whose parent is a LIST_ITEM (or whose text matches the parent LIST_ITEM's text). Add a regression test that asserts `len(leaf_segments) == logical_leaf_count` for a list-heavy source.",
+    "round6_status": "persistent (pre-existed since Phase 2/3 commit `84753ad`; exposed by R5 Batch H per-leaf translation)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-A7-003"
+    ],
+    "root_id": "TRA-A7-003"
+  },
+  {
+    "id": "TRA-A7-004",
+    "track": "A7",
+    "title": "EntityAmbiguity still bypasses EXCEPTION_HANDLER audit-record path (PERSISTENT INFO, partial-fix, carry-over from A6-004)",
+    "severity": "INFO",
+    "category": "Spec Conformance / Exception Recovery (§6)",
+    "evidence": "- `rg -n \"raise EntityAmbiguity\" tra/` → **0 hits**. EntityAmbiguity is never raised as an exception. - `tra/isa.py:388` — `recover_entity_ambiguity(ent.name, ctx.unresolved_ambiguities)` is called DIRECTLY from `build_entity_table` when a token matches multiple entity patterns and the module hint is None. Recovery procedure adds to `ctx.unresolved_ambiguities` (WARNING severity) but does NOT emit an EXCEPTION_HANDLER audit record. - `tra/kernel.py:337-340` — `build_entity_table` IS wrapped in `try/except TRAException → self._recover(exc)`, but since EntityAmbiguity is never raised (only direct-called), the wrapper never fires for this exception type. - `tra/recovery.py:155-176` — `route_exception` HAS a dispatch branch for `EntityAmbiguity`. The infrastructure is in place but the exception is never raised. - Compare: `tra/isa.py:553-575` — `UnknownTerm` IS properly emitting EXCEPTION_HANDLER audit records. - Spec §6 ENTITY_AMBIGUITY row: \"Log as `Warning`. Treat as Entity (Immutable) to prevent accidental translation.\" The recovery procedure is invoked (correct), but the L4 audit-trail record is missing (incomplete).",
+    "detail": "The fix introduced by R5 Batch 2 for UnknownTerm should be mirrored for EntityAmbiguity: instead of calling `recover_entity_ambiguity(...)` directly, `raise EntityAmbiguity(token)` and let the kernel's `_recover` dispatch it via `route_exception`. The recovery procedure can then emit the EXCEPTION_HANDLER record itself.",
+    "suggested_fix": "In `build_entity_table`, replace the direct `recover_entity_ambiguity(ent.name, ctx.unresolved_ambiguities)` call with `raise EntityAmbiguity(ent.name)`. Verify the kernel's `_recover` correctly routes it to `recover_entity_ambiguity` and emits an EXCEPTION_HANDLER audit record. Add a regression test.",
+    "round6_status": "partial (TRA-A5-003 → 4 of 5 exception types produce EXCEPTION_HANDLER records at HEAD; EntityAmbiguity is the remaining 1 of 5)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-A7-004"
+    ],
+    "root_id": "TRA-A7-004",
+    "finding_type_detail": "issue (partial-fix)"
+  },
+  {
+    "id": "TRA-A7-005",
+    "track": "A7",
+    "title": "`_execute_translation` and `verify_output` not wrapped in try/except TRAException (PERSISTENT INFO, carry-over from A6-005)",
+    "severity": "INFO",
+    "category": "Spec Conformance / Exception Recovery (§6, Kernel Invariant)",
+    "evidence": "- `tra/kernel.py:297-321` — `analyze_document` IS wrapped in `try/except TRAException → self._recover(exc)`. - `tra/kernel.py:333-336` — `build_glossary` IS wrapped. - `tra/kernel.py:341-344` — `build_entity_table` IS wrapped. - `tra/kernel.py:347` — `target = self._execute_translation(src, llm_translate=llm_translate)` — NOT wrapped. - `tra/kernel.py:361` — `diagnostics = verify_output(target, src, self.ctx, self.audit)` — NOT wrapped. - `tra/kernel.py:402` — `final_diags = verify_output(target, src, self.ctx, self.audit)` (L3 gate check) — NOT wrapped. - Spec §6: \"If an ISA instruction raises a TRA-EXCEPTION, the kernel routes it through EXCEPTION_HANDLER (route_exception).\"",
+    "detail": "If `_execute_translation` (which calls `translate_segment` per leaf) or `verify_output` raises a TRAException, the kernel crashes without dispatching through `_recover`, so no EXCEPTION_HANDLER audit record is emitted. In practice, both functions catch their own internal exceptions (translate_segment degrades to rule path on LLM failure; verify_output emits diagnostics rather than raising), so this is a latent gap rather than an active bug. But it violates the spec §6 contract for any future ISA additions that might raise.",
+    "suggested_fix": "Wrap both call sites in `try/except TRAException → self._recover(exc)` matching the pattern used for analyze/build. Add a regression test that monkeypatches `_execute_translation` to raise a TRAException and asserts an EXCEPTION_HANDLER audit record is emitted.",
+    "round6_status": "persistent (carry-over from R5 A5-015; R6 re-confirmed)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-A7-005"
+    ],
+    "root_id": "TRA-A7-005",
+    "finding_type_detail": "issue (persistent)"
+  },
+  {
+    "id": "TRA-A7-007",
+    "track": "A7",
+    "title": "4 critical invariants — VERIFIED HOLDING at HEAD `6d3144a` (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Spec Conformance / Critical Invariants (§3, §5, §7)",
+    "evidence": "1. **Canonical terminology exact:** `tra/modules/zh_en.py` `EPISTEMIC_LEXICON` maps `成立 → Confirmed` (not \"Valid\"/\"True\"), `执行环境 → execution environment` (not \"runtime\"), `高度可信 → highly credible` (not \"indisputably true\"). Verified at HEAD `6d3144a`. 2. **Entities immutable:** `tra/isa.py:388` `recover_entity_ambiguity` adds entity to `ctx.unresolved_ambiguities` rather than translating; `tra/utils.py` `extract_entities` regex preserves verbatim. 3. **Verification never self-scores:** `tra/memory.py:6-8` docstring + `confidence_note` field is recorded but never read by VERIFY or REPAIR (verified by `rg \"confidence_note\" tra/isa.py tra/kernel.py` returning only the field assignment, no reads). 4. **Repair surgical:** `tra/isa.py` `repair_segment` strategy per violation type (structural/terminology/entity/epistemic/factual) — each resolves the specific violation without introducing new ones. Re-verify via `verify_output` after each repair at `kernel.py:717`.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-A6-007 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-A7-007"
+    ],
+    "root_id": "TRA-A7-007"
+  },
+  {
+    "id": "TRA-A7-008",
+    "track": "A7",
+    "title": "All 5 PolicyResolver severity pairs arbitrated (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Spec Conformance / Policy Engine (§5.2)",
+    "evidence": "- `rg \"_POLICY_RESOLVER.wins\" tra/isa.py` returns 5 hits in `verify_output`: 1. Factual (P1) vs Fluency (P6) 2. Structural (P2) vs Fluency (P6) 3. Entity (P3) vs Fluency (P6) 4. Terminological (P4) vs Fluency (P6) 5. Epistemic (P5) vs Fluency (P6) - Spec §5.2 universal arbitration contract: \"All severity decisions must be routed through PolicyResolver.\" - Monkeypatching `_POLICY_RESOLVER.wins` to return False drops ALL severities from BLOCKING to WARNING (test in `test_outstanding_findings.py::TestTRA072UniversalPolicyArbitration`).",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-A6-008 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-A7-008"
+    ],
+    "root_id": "TRA-A7-008"
+  },
+  {
+    "id": "TRA-A7-010",
+    "track": "A7",
+    "title": "Factual integrity check in verify_output — VERIFIED HOLDING (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Spec Conformance / VERIFY_OUTPUT (§3, §5 P1)",
+    "evidence": "- `tra/isa.py` `verify_output` — factual-integrity check (version + date token preservation) added by R5 Batch 2 (`36246bb`, TRA-A5-013). Arbitrated via `_POLICY_RESOLVER.wins(FACTUAL_INTEGRITY, TARGET_FLUENCY)` (P1 vs P6). - Test: `test_outstanding_findings.py::TestTRA_A5_013_FactualIntegrityCheck` — version + date tokens preserved; failure raises BLOCKING diagnostic.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-A6-010 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-A7-010"
+    ],
+    "root_id": "TRA-A7-010"
+  },
+  {
+    "id": "TRA-A7-011",
+    "track": "A7",
+    "title": "EMPTY_SOURCE raises BrokenMarkdown with BLOCKING — VERIFIED HOLDING (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Spec Conformance / Exception Recovery (§6)",
+    "evidence": "- `tra/isa.py:115` — `analyze_document` raises `BrokenMarkdown` for empty source (was base `TRAException` → WARNING; R5 Batch E `57997a8` TRA-E5-003 fix). - `tra/recovery.py` — `route_exception` dispatches `BrokenMarkdown` → `recover_broken_markdown` returning `Severity.BLOCKING + HALT` per Spec §6. - End-to-end L3 ConformanceFailure: `pytest tests/test_outstanding_findings.py::TestTRA_E5_003_EmptySourceBrokenMarkdown` passes.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-A6-011 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-A7-011"
+    ],
+    "root_id": "TRA-A7-011"
+  },
+  {
+    "id": "TRA-A7-012",
+    "track": "A7",
+    "title": "L3/L4 conformance gates enforced — VERIFIED HOLDING (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Spec Conformance / Conformance Levels (§8)",
+    "evidence": "- In-band: `tra/kernel.py:398-424` — at L3/L4, if BLOCKING diagnostics remain after repair loop, raises `ConformanceFailure`. Also rejects `BROKEN_LINK` entries in `unresolved_ambiguities`. - Out-of-band: `tra/validate.py` `validate_output` — standalone verifier; zero BLOCKING = PASS, else FAIL with exit 1. - CLI: `python -m tra_cli validate input.md output.md --level L3` works end-to-end. ---",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-A6-012 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-A7-012"
+    ],
+    "root_id": "TRA-A7-012"
+  },
+  {
+    "id": "TRA-B7-004",
+    "track": "B7",
+    "title": "`self._cache: Any = None` in `tra/cache.py:119` (PERSISTENT INFO, carry-over from B6-007)",
+    "severity": "INFO",
+    "category": "Code Quality / Type Safety",
+    "evidence": "- `tra/cache.py:119` — `self._cache: Any = None`. mypy --strict passes because `Any` is permissive. - `tra/cache.py:124` — `self._cache = diskcache.Cache(str(self.directory))` (the actual type at runtime). - `tra/cache.py:127, 158, 178, 189` — all use `self._cache is None` checks, then access `.get`/`.set`/`.delete`/`.iterkeys`. - The `diskcache` import is local to `__init__` (line 121) to avoid a hard dependency when `enabled=False`. This is why the type annotation can't simply be `diskcache.Cache | None` at module scope.",
+    "detail": "Using `Any` defeats mypy's type checking for all `self._cache.*` method calls. A typo like `self._cache.gt(key)` instead of `self._cache.get(key)` would pass mypy and fail at runtime.",
+    "suggested_fix": "Use `TYPE_CHECKING` import for the type annotation: ```python from typing import TYPE_CHECKING if TYPE_CHECKING: import diskcache class TranslationCache: def __init__(self, ...): self._cache: \"diskcache.Cache | None\" = None ``` This gives mypy the type information without adding a runtime import dependency.",
+    "round6_status": "persistent (carry-over from B6-007)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-B7-004"
+    ],
+    "root_id": "TRA-B7-004"
+  },
+  {
+    "id": "TRA-B7-010",
+    "track": "B7",
+    "title": "Quality gates ALL GREEN — ruff/mypy/pytest pass at HEAD (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Code Quality / Quality Gates",
+    "evidence": "- `ruff format --check .` → 39 files already formatted ✓ - `ruff check .` → All checks passed ✓ - `mypy --strict tra` → Success: no issues found in 20 source files ✓ - `pytest tests/` → 309 passed in 1.68s ✓",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-B6-010 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-B7-010"
+    ],
+    "root_id": "TRA-B7-010"
+  },
+  {
+    "id": "TRA-B7-013",
+    "track": "B7",
+    "title": "OWASP A04 VERIFIED HOLDS — No ReDoS in production regex patterns (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Security / OWASP A04 (Insecure Design)",
+    "evidence": "- 8 production regex patterns in `tra/utils.py`, `tra/kernel.py`, `tra/anchor.py` — none exhibit catastrophic backtracking. - Tested against 10 adversarial inputs per pattern (long strings, nested quantifiers, evil character classes).",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-B6-013 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-B7-013"
+    ],
+    "root_id": "TRA-B7-013"
+  },
+  {
+    "id": "TRA-B7-014",
+    "track": "B7",
+    "title": "OWASP A05 VERIFIED HOLDS — All YAML loads use `safe_load` (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Security / OWASP A05 (Security Misconfiguration)",
+    "evidence": "- `rg \"yaml\\.load\\b|yaml\\.full_load\" tra/` → 0 hits. - `rg \"yaml\\.safe_load\" tra/` → 2 hits (`config.py`, `reporting.py`), both using `safe_load`. ---",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-B6-014 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-B7-014"
+    ],
+    "root_id": "TRA-B7-014"
+  },
+  {
+    "id": "TRA-C7-005",
+    "track": "C7",
+    "title": "TRA-MODULE-AUTHORING.md §2.7 section header uses parameter name `source` while actual Protocol uses `text` (PERSISTENT INFO, carry-over from F6-009)",
+    "severity": "INFO",
+    "category": "Doc-vs-Code Consistency / Module Authoring Guide",
+    "evidence": "- `TRA-MODULE-AUTHORING.md` §2.7 — section header references parameter name `source`. - `tra/modules/base.py` `LanguageModuleProtocol` — actual parameter name is `text`. - `TRA-MODULE-AUTHORING.md` §1 — snippet uses `text` (correct).",
+    "detail": "Cosmetic drift between §1 and §2.7 of the same document. Confusing for module authors.",
+    "suggested_fix": "Rename §2.7 section header parameter from `source` to `text` to match §1 and the Protocol.",
+    "round6_status": "persistent (carry-over from F6-009)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-C7-005"
+    ],
+    "root_id": "TRA-C7-005"
+  },
+  {
+    "id": "TRA-C7-006",
+    "track": "C7",
+    "title": "CLAUDE.md \"Phase 7 has not started\" claim FIXED — line 15 now reads \"Phases 0-7 are complete\" (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Doc-vs-Code Consistency / R6 Batch 1 Fix Verification",
+    "evidence": "- `CLAUDE.md:15` — \"Phases 0–7 are complete — foundation (Phase 0), structural parsing/anchor resolution (Phase 1)...\" - Matches `CLAUDE.md:56` \"Phase 7 (documentation & delivery) COMPLETE\". - No internal contradiction.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "fixed-verified (TRA-C6-001 fixed in commit `6d3144a`)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-C7-006"
+    ],
+    "root_id": "TRA-C7-006"
+  },
+  {
+    "id": "TRA-C7-007",
+    "track": "C7",
+    "title": "README.md \"Phase 7 has not started\" claim FIXED — line 114 now reads \"Phases 0-7 are complete\" (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Doc-vs-Code Consistency / R6 Batch 1 Fix Verification",
+    "evidence": "- `README.md:114` — \"Phases 0–7 are complete (foundation → Kernel/Policy orchestration → ZH-EN module → CLI + benchmark suite → hardening → documentation & delivery).\" - Matches HEAD `6d3144a` state.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "fixed-verified (TRA-C6-002 fixed in commit `6d3144a`)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-C7-007"
+    ],
+    "root_id": "TRA-C7-007"
+  },
+  {
+    "id": "TRA-C7-008",
+    "track": "C7",
+    "title": "SKILL.md \"Known limitations\" + \"Remaining persistent findings\" sections updated to reflect HEAD `6d3144a` (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Doc-vs-Code Consistency / R6 Batch 1 Fix Verification",
+    "evidence": "- `tra-prototype/SKILL.md:303-326` — \"Known limitations\" section now correctly states: - TRA-001 FIXED (Phase 8 per-leaf translation, Batch H) - TRA-079 FIXED (cache HMAC, Batch E) - TRA-094 FIXED (mutmut, Batch F) - Phase 7 COMPLETE (Batch I) - `tra-prototype/SKILL.md:423-427` — \"Remaining persistent findings\" section now correctly states only TRA-040 (intentional design decision) as persistent.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "fixed-verified (TRA-C6-003/004/005/006 fixed in commit `6d3144a`)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-C7-008"
+    ],
+    "root_id": "TRA-C7-008"
+  },
+  {
+    "id": "TRA-C7-009",
+    "track": "C7",
+    "title": "to_translate.md benchmark count \"24\" → \"36\" FIXED (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Doc-vs-Code Consistency / R6 Batch 1 Fix Verification",
+    "evidence": "- `to_translate.md` — now states \"目前包含36个测试用例\" (currently contains 36 test cases). - Matches `tests/benchmark/cases/*.jsonl` count at HEAD `6d3144a`.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "fixed-verified (TRA-C6-010 fixed in commit `6d3144a`)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-C7-009"
+    ],
+    "root_id": "TRA-C7-009"
+  },
+  {
+    "id": "TRA-C7-010",
+    "track": "C7",
+    "title": "AGENTS.md test count + Round 5 reference are correct (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Doc-vs-Code Consistency / AGENTS.md Accuracy",
+    "evidence": "- `AGENTS.md:41` — \"309 tests across 16 files\" — matches `pytest tests/` output at HEAD `6d3144a`. - `AGENTS.md:52` — Round 5 audit deliverables table entry is accurate. - Note: AGENTS.md does NOT yet reference Round 6 or Round 7 audits (see TRA-C7-002 for the README.md equivalent; AGENTS.md should also be updated). ---",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-C6-014 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-C7-010"
+    ],
+    "root_id": "TRA-C7-010"
+  },
+  {
+    "id": "TRA-D7-004",
+    "track": "D7",
+    "title": "Test isolation gaps in 4 TestTRA_A5_003 / TestTRA_E5_003 tests (PERSISTENT INFO, carry-over from D6-007)",
+    "severity": "INFO",
+    "category": "Test Suite / Test Isolation",
+    "evidence": "- `rg \"BootstrapConfig.from_yaml..config\\.yaml..\" tests/test_outstanding_findings.py | wc -l` → still multiple hits that don't override `cache_directory`. - The R6 Batch 1 fix added `cache_directory: tempfile.mkdtemp() + \"/cache\"` to 4 sites, but other sites in the same file still use the default `./cache` from `config.yaml`.",
+    "detail": "Test isolation is improved but not complete. Tests that share the default `./cache` can still pollute each other if run in sequence.",
+    "suggested_fix": "Audit all `BootstrapConfig.from_yaml(\"config.yaml\")` calls in tests and ensure each one overrides `cache_directory` with a `tempfile.mkdtemp()`.",
+    "round6_status": "persistent (carry-over from D6-007; R6 Batch 1 fixed 4 of the original sites, but 4 remain)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D7-004"
+    ],
+    "root_id": "TRA-D7-004"
+  },
+  {
+    "id": "TRA-D7-005",
+    "track": "D7",
+    "title": "3 tests in `test_isa.py` use shared `./cache` directory (PERSISTENT INFO, carry-over from D6-008)",
+    "severity": "INFO",
+    "category": "Test Suite / Test Isolation",
+    "evidence": "- `rg \"TranslationCache\\(..cache..\\)\" tests/test_isa.py` → 3 hits using a shared `./cache` directory. - These tests pass at HEAD `6d3144a` because pytest runs them in order, but they would fail intermittently if run in parallel or in a different order.",
+    "detail": "",
+    "suggested_fix": "Replace `TranslationCache(\"./cache\")` with `TranslationCache(tempfile.mkdtemp())` in all 3 sites.",
+    "round6_status": "persistent (carry-over from D6-008)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D7-005"
+    ],
+    "root_id": "TRA-D7-005"
+  },
+  {
+    "id": "TRA-D7-006",
+    "track": "D7",
+    "title": "`test_l4_forensic_trace_emitted_at_l4` doesn't override `cache_directory` (PERSISTENT INFO, carry-over from D6-009)",
+    "severity": "INFO",
+    "category": "Test Suite / Test Isolation",
+    "evidence": "- `tests/test_outstanding_findings.py::TestTRA_E5_016_L4ForensicTrace::test_l4_forensic_trace_emitted_at_l4` — uses `BootstrapConfig.from_yaml(\"config.yaml\")` without `cache_directory` override.",
+    "detail": "",
+    "suggested_fix": "Add `cache_directory: tempfile.mkdtemp() + \"/cache\"` to the `model_copy` call.",
+    "round6_status": "persistent (carry-over from D6-009)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D7-006"
+    ],
+    "root_id": "TRA-D7-006"
+  },
+  {
+    "id": "TRA-D7-007",
+    "track": "D7",
+    "title": "`TestTRA033LLMSeamRobustness` weak assertion (PERSISTENT INFO, carry-over from D6-010 / TRA-D5-003)",
+    "severity": "INFO",
+    "category": "Test Suite / Weak Assertion",
+    "evidence": "- `tests/test_outstanding_findings.py::TestTRA033LLMSeamRobustness` — asserts `degraded` is truthy but does NOT assert the specific number of `TRANSLATE_SEGMENT` records or the specific content of the degraded audit record.",
+    "detail": "",
+    "suggested_fix": "Strengthen assertion to: (a) exactly one `TRANSLATE_SEGMENT` audit record with `artifact_snapshot.degraded == True`, (b) the `artifact_snapshot.reason` contains `llm_unavailable:`, (c) no other `TRANSLATE_SEGMENT` records exist.",
+    "round6_status": "persistent (carry-over from D6-010 / TRA-D5-003)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D7-007"
+    ],
+    "root_id": "TRA-D7-007"
+  },
+  {
+    "id": "TRA-D7-008",
+    "track": "D7",
+    "title": "Hardcoded `/tmp/test_tra071*.jsonl` paths (PERSISTENT INFO, carry-over from D6-012)",
+    "severity": "INFO",
+    "category": "Test Suite / Portability",
+    "evidence": "- `rg \"/tmp/test_tra071\" tests/` → multiple hits in `test_tra071_broken_markdown.py` using hardcoded `/tmp/test_tra071*.jsonl` paths. - These can collide if tests run in parallel on the same machine.",
+    "detail": "",
+    "suggested_fix": "Replace with `tempfile.NamedTemporaryFile(delete=False, suffix=\".jsonl\").name`.",
+    "round6_status": "persistent (carry-over from D6-012)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D7-008"
+    ],
+    "root_id": "TRA-D7-008"
+  },
+  {
+    "id": "TRA-D7-009",
+    "track": "D7",
+    "title": "Coverage 96% (58 missing lines, mostly fallback paths) (PERSISTENT INFO, carry-over from D6-013)",
+    "severity": "INFO",
+    "category": "Test Suite / Coverage",
+    "evidence": "- `pytest --cov=tra tests/` → 96% coverage, 58 missing lines. - Missing lines are mostly fallback/error paths that are difficult to trigger in tests (e.g., diskcache.Corrupt exception, YAML parse errors).",
+    "detail": "",
+    "suggested_fix": "Add targeted tests for the missing paths where feasible. Some paths (e.g., diskcache internal errors) may be impractical to test.",
+    "round6_status": "persistent (carry-over from D6-013)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D7-009"
+    ],
+    "root_id": "TRA-D7-009"
+  },
+  {
+    "id": "TRA-D7-010",
+    "track": "D7",
+    "title": "Benchmark suite verified at 36 cases (TRA-D5-006 partial: target 100+) (POSITIVE VERIFICATION, partial)",
+    "severity": "INFO",
+    "category": "Test Suite / Benchmark Coverage",
+    "evidence": "- `tests/benchmark/cases/sft.jsonl` + `tests/benchmark/cases/regression.jsonl` → 36 cases total. - `pytest tests/test_benchmark.py` → all 36 cases pass, 0 BLOCKING, 0 WARNING. - Target: 100+ per `TRA-BENCHMARK-SUITE.md`. Current: 36/100 (36%).",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-D6-014 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-D7-010"
+    ],
+    "root_id": "TRA-D7-010",
+    "finding_type_detail": "positive_verification (partial)"
+  },
+  {
+    "id": "TRA-D7-012",
+    "track": "D7",
+    "title": "LLM seam DI tests verified holding (TRA-D5-002) (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Test Suite / LLM Seam DI",
+    "evidence": "- `tests/test_outstanding_findings.py::TestTRA_D5_002_LLMSeamDI` — tests pass. - `TRAKernel.run(source, llm_translate=callback)` works as documented.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-D6-016 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-D7-012"
+    ],
+    "root_id": "TRA-D7-012"
+  },
+  {
+    "id": "TRA-D7-014",
+    "track": "D7",
+    "title": "Mutation testing config tests present but superficial (PERSISTENT INFO, carry-over from D6-018 / TRA-D5-011)",
+    "severity": "INFO",
+    "category": "Test Suite / Mutation Testing",
+    "evidence": "- `tests/test_outstanding_findings.py::TestTRA_D5_011_MutationTestingConfig` — only checks that `[tool.mutmut]` section exists in `pyproject.toml`. Does NOT verify the keys are non-deprecated (see TRA-B7-001) or that `mutmut run` actually executes without crashing.",
+    "detail": "",
+    "suggested_fix": "Strengthen the test to run `mutmut run --help` and assert zero `DeprecationWarning` output (once TRA-B7-001 is fixed).",
+    "round6_status": "persistent (carry-over from D6-018)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D7-014"
+    ],
+    "root_id": "TRA-D7-014"
+  },
+  {
+    "id": "TRA-D7-015",
+    "track": "D7",
+    "title": "`e2e_test.py` is a standalone script, not a pytest test (PERSISTENT INFO, carry-over from D6-019 / TRA-D5-009)",
+    "severity": "INFO",
+    "category": "Test Suite / E2E Test Coverage",
+    "evidence": "- `tra-prototype/e2e_test.py` — standalone script (`python e2e_test.py`), not collected by pytest. - `tests/test_e2e_to_translate.py` — 12 pytest tests cover the same ground, so the standalone script is redundant but not harmful.",
+    "detail": "",
+    "suggested_fix": "Either delete `e2e_test.py` (the pytest suite covers it) or convert it to a pytest test. Low priority.",
+    "round6_status": "persistent (carry-over from D6-019)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D7-015"
+    ],
+    "root_id": "TRA-D7-015"
+  },
+  {
+    "id": "TRA-D7-016",
+    "track": "D7",
+    "title": "Test count 309/16 verified (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Test Suite / Test Count",
+    "evidence": "- `pytest tests/ --co -q | wc -l` → 309 tests collected. - `find tests -name 'test_*.py' | wc -l` → 16 test files. - Matches `CLAUDE.md`, `AGENTS.md`, `tra-prototype/SKILL.md` claims. ---",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-D6-020 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-D7-016"
+    ],
+    "root_id": "TRA-D7-016"
+  },
+  {
+    "id": "TRA-E7-001",
+    "track": "E7",
+    "title": "`audit_trace.jsonl` truncate mode closes R6 E6-001 reproducibility gap (POSITIVE VERIFICATION, R6 Batch 1 fix)",
+    "severity": "INFO",
+    "category": "Forensic L4 / TRA-013 Byte-Reproducibility",
+    "evidence": "- `tra/diagnostics.py` `AuditTrail.__init__` now accepts `truncate: bool = False` parameter. When `truncate=True`, the file is opened in `w` mode (truncated) instead of `a` mode (append). - `tra/kernel.py` `TRAKernel.__init__` passes `truncate=True` so each run starts with a fresh `audit_trace.jsonl`. - Dynamic verification: 2 consecutive L4 runs on the default CLI path (`audit_trace.jsonl` reused) produce byte-identical output (sha256 `d01e7bfa22db9b35...` × 2). Previously (R6 E6-001), the append mode caused the 2nd run to contain stale records from the 1st run, breaking reproducibility. - Tests that need append behavior (e.g., multi-kernel tests) use the default `truncate=False`.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "fixed-verified (TRA-E6-001 WARNING fixed in R6 Batch 1 commit `6d3144a`)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-E7-001"
+    ],
+    "root_id": "TRA-E7-001"
+  },
+  {
+    "id": "TRA-E7-002",
+    "track": "E7",
+    "title": "Warm-cache suppresses EXCEPTION_HANDLER records + evidence_trace attribution (PERSISTENT INFO, cross-ref TRA-A7-001, TRA-E5-016)",
+    "severity": "INFO",
+    "category": "Forensic L4 / Audit-Trail Completeness",
+    "evidence": "- See TRA-A7-001 for the root cause: cache-hit early-return at `tra/isa.py:461-465` bypasses EXCEPTION_HANDLER emission. - L4 impact: `evidence_trace.jsonl` attribution is also affected — the cache-hit path emits only a `TRANSLATE_SEGMENT` record with cached `evidence_ids`, without re-attributing them to the L4 line-by-line trace. - `ambiguity_register.json` `UNKNOWN_TERM` entries are similarly suppressed on cache hit.",
+    "detail": "The full L4 forensic trail is only complete on the first run after a cache invalidation. Subsequent runs (cache hits) produce a degraded trail. This is a known limitation that should be either fixed (extend `TranslationResult` with `audit_side_effects`) or documented (warn when `--level L4_FORENSIC` is combined with cache enabled).",
+    "suggested_fix": "Same as TRA-A7-001. Alternatively, add a CLI warning when `--level L4_FORENSIC` is combined with the default cache, recommending `cache.enabled: false` for full forensic trail.",
+    "round6_status": "persistent (carry-over from E6-003, cross-ref A6-001 / A7-001)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-E7-002"
+    ],
+    "root_id": "TRA-E7-002"
+  },
+  {
+    "id": "TRA-E7-004",
+    "track": "E7",
+    "title": "All 9 L4 artifacts present + valid (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Forensic L4 / Artifact Inventory",
+    "evidence": "- L4 run produces 9 artifacts: 1. `compilation_artifacts/glossary.yaml` 2. `compilation_artifacts/entity_table.yaml` 3. `compilation_artifacts/structural_map.json` 4. `compilation_artifacts/style_profile.yaml` 5. `compilation_artifacts/execution_log.json` 6. `compilation_artifacts/repair_history.json` 7. `audit_trace.jsonl` 8. `evidence_trace.jsonl` (L4-only) 9. `ambiguity_register.json` (L4-only) - All artifacts are valid JSON/YAML and parseable.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-E6-007 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-E7-004"
+    ],
+    "root_id": "TRA-E7-004"
+  },
+  {
+    "id": "TRA-E7-005",
+    "track": "E7",
+    "title": "L3 gate (zero BLOCKING) passes on cold-cache L4 output (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Forensic L4 / L3 Conformance Gate",
+    "evidence": "- L4 run of `to_translate.md` produces 0 BLOCKING diagnostics. - `python -m tra_cli validate to_translate.md to_translate.en.md --level L3` → exit 0 (PASS).",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-E6-008 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-E7-005"
+    ],
+    "root_id": "TRA-E7-005"
+  },
+  {
+    "id": "TRA-E7-006",
+    "track": "E7",
+    "title": "Per-leaf translation produces multiple TRANSLATE_SEGMENT audit records (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Forensic L4 / Per-Leaf Audit Trail",
+    "evidence": "- L4 run of `to_translate.md` produces N `TRANSLATE_SEGMENT` audit records where N = number of leaf segments in the structural map. - Each record has its own `evidence_ids` chain. - Cache-hit records (duplicate leaf text) emit a `TRANSLATE_SEGMENT` record with `cache_hit=True`.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-E6-009 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-E7-006"
+    ],
+    "root_id": "TRA-E7-006"
+  },
+  {
+    "id": "TRA-E7-007",
+    "track": "E7",
+    "title": "EXCEPTION_HANDLER audit records present for UnknownTerm (POSITIVE VERIFICATION, with TRA-E7-002 residual)",
+    "severity": "INFO",
+    "category": "Forensic L4 / Exception Audit Trail",
+    "evidence": "- Cold-cache L4 run of `to_translate.md` produces EXCEPTION_HANDLER audit records with `exception_code='UNKNOWN_TERM'` for each unknown CJK token. - Records are properly attributed in `evidence_trace.jsonl` and `ambiguity_register.json`. - **Residual:** On warm-cache runs, these records are suppressed (see TRA-E7-002 / TRA-A7-001).",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-E6-010 re-confirmed; TRA-E7-002 identifies the cache-hit suppression gap)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-E7-007"
+    ],
+    "root_id": "TRA-E7-007",
+    "finding_type_detail": "positive_verification (partial)"
+  },
+  {
+    "id": "TRA-E7-008",
+    "track": "E7",
+    "title": "Hash chain integrity: VERIFY_OUTPUT input_hash matches emitted target (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Forensic L4 / Hash Chain Integrity",
+    "evidence": "- `audit_trace.jsonl` VERIFY_OUTPUT record's `input_hash` field matches the SHA-256 of the emitted target markdown. - Verified by comparing `input_hash` against `sha256sum to_translate.en.md`.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-E6-011 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-E7-008"
+    ],
+    "root_id": "TRA-E7-008"
+  },
+  {
+    "id": "TRA-E7-009",
+    "track": "E7",
+    "title": "TRA-E5-013 double VERIFY_OUTPUT at L3+ still undocumented (PERSISTENT INFO, carry-over from E6-012)",
+    "severity": "INFO",
+    "category": "Forensic L4 / Documentation Gap",
+    "evidence": "- `tra/kernel.py:350-360` — comment documents the double-VERIFY_OUTPUT behavior (lines 350-360 explain why `verify_output` is called twice at L3/L4). - However, this behavior is NOT documented in `tra-prototype/SKILL.md` §4 (CLI usage) or `docs/api-reference.md`. An L4 auditor inspecting the audit trail sees two VERIFY_OUTPUT records and may not realize this is intentional.",
+    "detail": "",
+    "suggested_fix": "Add a note to `tra-prototype/SKILL.md` §4 and `docs/api-reference.md` explaining the double-VERIFY_OUTPUT behavior at L3+. ---",
+    "round6_status": "persistent (carry-over from E6-012 / TRA-E5-013)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-E7-009"
+    ],
+    "root_id": "TRA-E7-009"
+  },
+  {
+    "id": "TRA-F7-003",
+    "track": "F7",
+    "title": "TRA-F5-010 — `_normalize_language_pair` rejects malformed `--lang` values (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Stub-Module Conformance / Input Validation",
+    "evidence": "- `tra_cli.py` `_normalize_language_pair` rejects malformed `--lang` values (e.g., `zh_en`, `ZH-EN`, `zh->en` → all normalized to `zh-en`; invalid formats raise `click.BadParameter`). - Test: `tests/test_outstanding_findings.py::TestTRA_F5_010_NormalizeLanguagePair` passes.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-F6-003 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-F7-003"
+    ],
+    "root_id": "TRA-F7-003"
+  },
+  {
+    "id": "TRA-F7-004",
+    "track": "F7",
+    "title": "TRA-F5-011 — `register()` rejects language modules with no `metadata.direction` (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Stub-Module Conformance / Registration Validation",
+    "evidence": "- `tra/modules/registry.py` `register()` raises `ValueError` if the module's `metadata.direction` is `None` or empty. - Test: `tests/test_outstanding_findings.py::TestTRA_F5_011_RegisterRejectsNoDirection` passes.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-F6-004 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-F7-004"
+    ],
+    "root_id": "TRA-F7-004"
+  },
+  {
+    "id": "TRA-F7-005",
+    "track": "F7",
+    "title": "`ModuleInterface` contract — 7 `Callable` fields exactly match `LanguageModuleProtocol`'s 7 method signatures (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Stub-Module Conformance / Protocol Compliance",
+    "evidence": "- `tra/modules/registry.py` `ModuleInterface` is a `dataclass` with 7 `Callable` fields: `metadata`, `get_glossary_mappings`, `get_style_profile`, `apply_rules`, `entity_type_hint`, `analyze_special_terms`, `translate_special_constructs`. - `tra/modules/base.py` `LanguageModuleProtocol` defines the same 7 methods with matching signatures. - `tests/test_tra043_protocol.py` verifies the Protocol satisfaction.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-F6-005 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-F7-005"
+    ],
+    "root_id": "TRA-F7-005"
+  },
+  {
+    "id": "TRA-F7-006",
+    "track": "F7",
+    "title": "`build_default_registry()` returns a registry containing the ZH-EN module registered via `as_interface()` (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Stub-Module Conformance / Default Registry",
+    "evidence": "- `tra/modules/registry.py` `build_default_registry()` creates a `ModuleRegistry`, instantiates `ZHENModule`, calls `as_interface()`, and registers it. - The registry contains exactly 1 module (ZH-EN) at HEAD `6d3144a`.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-F6-006 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-F7-006"
+    ],
+    "root_id": "TRA-F7-006"
+  },
+  {
+    "id": "TRA-F7-007",
+    "track": "F7",
+    "title": "Edge cases — empty registry, duplicate modules, same-direction modules, unregister + re-register all behave correctly (POSITIVE VERIFICATION)",
+    "severity": "INFO",
+    "category": "Stub-Module Conformance / Edge Cases",
+    "evidence": "- `tests/test_modules.py` covers: empty registry (kernel falls back to ZHENModule singleton), duplicate registration (raises), same-direction modules (last one wins), unregister + re-register (works). - All edge case tests pass at HEAD `6d3144a`.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "verified-holding (TRA-F6-007 re-confirmed)",
+    "finding_type": "positive_verification",
+    "source_findings": [
+      "TRA-F7-007"
+    ],
+    "root_id": "TRA-F7-007"
+  },
+  {
+    "id": "TRA-F7-008",
+    "track": "F7",
+    "title": "`TRA-MODULE-AUTHORING.md` §2.7 section header uses parameter name `source` while actual Protocol uses `text` (PERSISTENT INFO, carry-over from F6-009)",
+    "severity": "INFO",
+    "category": "Stub-Module Conformance / Authoring Guide Drift",
+    "evidence": "- `TRA-MODULE-AUTHORING.md` §2.7 — section header references parameter name `source`. - `tra/modules/base.py` `LanguageModuleProtocol` — actual parameter name is `text`. - `TRA-MODULE-AUTHORING.md` §1 — snippet uses `text` (correct).",
+    "detail": "Same as TRA-C7-005. Cosmetic drift between §1 and §2.7 of the same document.",
+    "suggested_fix": "Rename §2.7 section header parameter from `source` to `text`. ---",
+    "round6_status": "persistent (carry-over from F6-009)",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-F7-008"
+    ],
+    "root_id": "TRA-F7-008"
+  },
+  {
+    "id": "TRA-A6-001",
+    "track": "R7",
+    "title": "Cache-hit suppresses EXCEPTION_HANDLER records for UnknownTerm — PERSISTENT",
+    "severity": "WARNING",
+    "category": "Uncategorized",
+    "evidence": "`tra/isa.py:461-468` — cache-hit early-return branch unchanged at HEAD `6d3144a`. When a cached `TranslationResult` is found, the function returns immediately after emitting a single `TRANSLATE_SEGMENT` audit record; it does NOT re-emit the `EXCEPTION_HANDLER` records that were produced on the cache-miss path. `TranslationResult` (`tra/cache.py:104-111`) still does not store `audit_side_effects` or any unknown-token metadata.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-A6-001"
+    ],
+    "root_id": "TRA-A6-001",
+    "round6_status_detail": "WARNING (STILL OPEN)"
+  },
+  {
+    "id": "TRA-A6-002",
+    "track": "R7",
+    "title": "_repair_loop doesn't pass segment_index — PERSISTENT",
+    "severity": "WARNING",
+    "category": "Uncategorized",
+    "evidence": "`tra/kernel.py:676-685` — `_repair_loop` calls `repair_segment(target, src, current, self.ctx, self.evidence, self.audit, attempt=attempt, max_retries=max_retries)` WITHOUT `segment_index`. `RepairAttempt.segment_index` defaults to 0 for all repair attempts in the production CLI path.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-A6-002"
+    ],
+    "root_id": "TRA-A6-002",
+    "round6_status_detail": "WARNING (STILL OPEN)"
+  },
+  {
+    "id": "TRA-C6-001",
+    "track": "R7",
+    "title": "CLAUDE.md \"Phase 7 has not started\" → \"Phases 0-7 are complete\" — FIXED-VERIFIED",
+    "severity": "BLOCKING",
+    "category": "Uncategorized",
+    "evidence": "`CLAUDE.md:15` now reads \"Phases 0–7 are complete — foundation (Phase 0), structural parsing/anchor resolution (Phase 1), the six ISA instructions (Phase 2), Kernel + Policy Engine orchestration (Phase 3), ZH-EN Language Module integration (Phase 4), CLI + artifacts + benchmark suite + L3 `validate` gate (Phase 5), hardening (Phase 6), and documentation & delivery (Phase 7).\" Matches line 56 \"Phase 7 COMPLETE\".",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-C6-001"
+    ],
+    "root_id": "TRA-C6-001",
+    "round6_status_detail": "BLOCKING → FIXED"
+  },
+  {
+    "id": "TRA-C6-002",
+    "track": "R7",
+    "title": "README.md \"Phase 7 has not started\" → \"Phases 0-7 are complete\" — FIXED-VERIFIED",
+    "severity": "BLOCKING",
+    "category": "Uncategorized",
+    "evidence": "`README.md:114` now reads \"Phases 0–7 are complete (foundation → Kernel/Policy orchestration → ZH-EN module → CLI + benchmark suite → hardening → documentation & delivery).\"",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-C6-002"
+    ],
+    "root_id": "TRA-C6-002",
+    "round6_status_detail": "BLOCKING → FIXED"
+  },
+  {
+    "id": "TRA-C6-003",
+    "track": "R7",
+    "title": "### TRA-C6-003/004/005/006 — SKILL.md + tra-prototype/README.md stale claims — FIXED-VERIFIED",
+    "severity": "BLOCKING",
+    "category": "Uncategorized",
+    "evidence": "`tra-prototype/SKILL.md:303-326` \"Known limitations\" section now correctly states: - TRA-001 FIXED (Phase 8 per-leaf translation, Batch H) - TRA-079 FIXED (cache HMAC, Batch E) - TRA-094 FIXED (mutmut, Batch F) - Phase 7 COMPLETE (Batch I) - `tra-prototype/README.md` \"Known gaps\" section updated to match HEAD `6d3144a`.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-C6-003"
+    ],
+    "root_id": "TRA-C6-003",
+    "round6_status_detail": "BLOCKING → FIXED"
+  },
+  {
+    "id": "TRA-C6-010",
+    "track": "R7",
+    "title": "to_translate.md benchmark count \"24\" → \"36\" — FIXED-VERIFIED",
+    "severity": "WARNING",
+    "category": "Uncategorized",
+    "evidence": "`to_translate.md` now states the benchmark count is 36 (matches `tests/benchmark/cases/*.jsonl`).",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-C6-010"
+    ],
+    "root_id": "TRA-C6-010",
+    "round6_status_detail": "WARNING → FIXED"
+  },
+  {
+    "id": "TRA-D6-001",
+    "track": "R7",
+    "title": "Test cache pollution — FIXED-VERIFIED",
+    "severity": "BLOCKING",
+    "category": "Uncategorized",
+    "evidence": "`tests/test_outstanding_findings.py` — 4 sites that previously used `BootstrapConfig.from_yaml(\"config.yaml\")` now use `tempfile.mkdtemp() + \"/cache\"` for isolation. `pytest tests/` runs clean on 1st, 2nd, 3rd consecutive runs (verified manually).",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D6-001"
+    ],
+    "root_id": "TRA-D6-001",
+    "round6_status_detail": "BLOCKING → FIXED"
+  },
+  {
+    "id": "TRA-D6-002",
+    "track": "R7",
+    "title": "### TRA-D6-002 / TRA-B6-008 — mutmut config crashes — PARTIAL (deprecated keys still in use)",
+    "severity": "WARNING",
+    "category": "Uncategorized",
+    "evidence": "`pyproject.toml:62-64` reads: ```toml [tool.mutmut] paths_to_mutate = [\"tra\"] # ← deprecated, mutmut 3.6+ warns tests_dir = [\"tests\"] # ← deprecated, mutmut 3.6+ warns max_stack_depth = 5 ``` Running `mutmut run --help` produces: ``` UserWarning: The config paths_to_mutate is deprecated. Please rename it to source_paths UserWarning: The config tests_dir is deprecated. Please add the path to pytest_add_cli_args_test_selection instead ``` The R6 fix changed string → list (correctly fixing the crash) but did NOT rename `paths_to_mutate` → `source_paths` or `tests_dir` → `pytest_add_cli_args_test_selection`. The config still produces deprecation warnings and will break entirely when mutmut 4.x removes the deprecated keys.",
+    "detail": "",
+    "suggested_fix": "Rename `paths_to_mutate` → `source_paths` and `tests_dir` → `pytest_add_cli_args_test_selection` in `pyproject.toml`. Add a regression test that asserts `mutmut run --help` produces zero `DeprecationWarning` output.",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D6-002"
+    ],
+    "root_id": "TRA-D6-002",
+    "round6_status_detail": "WARNING → PARTIAL"
+  },
+  {
+    "id": "TRA-D6-003",
+    "track": "R7",
+    "title": "15 hardcoded absolute paths in test_outstanding_findings.py — PERSISTENT",
+    "severity": "WARNING",
+    "category": "Uncategorized",
+    "evidence": "`tests/test_outstanding_findings.py` — `rg \"/home/z/my-project\" tests/test_outstanding_findings.py` returns 15 hits, all hardcoded paths like `/home/z/my-project/Translation-Runtime-Architecture/...`. These break test portability across containers/checkouts.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D6-003"
+    ],
+    "root_id": "TRA-D6-003",
+    "round6_status_detail": "WARNING (STILL OPEN)"
+  },
+  {
+    "id": "TRA-D6-004",
+    "track": "R7",
+    "title": "Vacuous entity-ambiguity test — PERSISTENT",
+    "severity": "WARNING",
+    "category": "Uncategorized",
+    "evidence": "`tests/test_outstanding_findings.py::TestTRA_A5_003_ExceptionsRoutedThroughKernelRecover::test_entity_ambiguity_emits_exception_handler_audit_record` — test asserts that EntityAmbiguity emits an EXCEPTION_HANDLER audit record, but `tra/isa.py:388` calls `recover_entity_ambiguity()` directly (never raises the exception), so `route_exception`'s EntityAmbiguity branch is never exercised. Test passes vacuously.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D6-004"
+    ],
+    "root_id": "TRA-D6-004",
+    "round6_status_detail": "WARNING (STILL OPEN)"
+  },
+  {
+    "id": "TRA-D6-005",
+    "track": "R7",
+    "title": "Wrong field name `level` → `conformance_level` — FIXED-VERIFIED",
+    "severity": "WARNING",
+    "category": "Uncategorized",
+    "evidence": "`tests/test_outstanding_findings.py` — search for `model_copy(update={\"level\"` returns 0 hits; `model_copy(update={\"conformance_level\"` returns the previously-broken sites now using the correct field name.",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D6-005"
+    ],
+    "root_id": "TRA-D6-005",
+    "round6_status_detail": "WARNING → FIXED"
+  },
+  {
+    "id": "TRA-D6-006",
+    "track": "R7",
+    "title": "Vacuous HITL e2e tests — FIXED-VERIFIED",
+    "severity": "WARNING",
+    "category": "Uncategorized",
+    "evidence": "`tests/test_outstanding_findings.py` — 3 HITL e2e tests now use `force_unrecoverable=True` to actually trigger the UNRECOVERABLE → HITL path. Tests fail (red) when `force_unrecoverable` is removed (verified manually).",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-D6-006"
+    ],
+    "root_id": "TRA-D6-006",
+    "round6_status_detail": "WARNING → FIXED"
+  },
+  {
+    "id": "TRA-E6-001",
+    "track": "R7",
+    "title": "audit_trace.jsonl append mode breaks reproducibility — FIXED-VERIFIED",
+    "severity": "WARNING",
+    "category": "Uncategorized",
+    "evidence": "`tra/diagnostics.py` `AuditTrail.__init__` now accepts `truncate: bool = False` parameter; `tra/kernel.py` `TRAKernel.__init__` passes `truncate=True` so each run starts with a fresh `audit_trace.jsonl`. Verified: 2 consecutive L4 runs on the default CLI path produce byte-identical `audit_trace.jsonl` (sha256 `d01e7bfa22db9b35...` × 2).",
+    "detail": "",
+    "suggested_fix": "",
+    "round6_status": "",
+    "finding_type": "issue",
+    "source_findings": [
+      "TRA-E6-001"
+    ],
+    "root_id": "TRA-E6-001",
+    "round6_status_detail": "WARNING → FIXED"
+  }
+]

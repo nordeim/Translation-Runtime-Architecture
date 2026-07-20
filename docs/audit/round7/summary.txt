@@ -1,0 +1,99 @@
+TRA Round 7 Audit — Master Findings Register Summary
+============================================================
+
+HEAD audited: 6d3144a
+Total findings (deduplicated): 75
+
+By severity:
+  BLOCKING  : 4
+  WARNING   : 18
+  INFO      : 53
+
+By finding type:
+  issue                    : 39
+  positive_verification    : 36
+
+By track:
+  A7: 11
+  B7: 13
+  C7: 10
+  D7: 15
+  E7: 9
+  F7: 8
+  R7: 13
+
+By Round 6 status:
+  fixed-verified (TRA-C6-001 fixed in commit `6d3144a`): 1
+  fixed-verified (TRA-C6-002 fixed in commit `6d3144a`): 1
+  fixed-verified (TRA-C6-003/004/005/006 fixed in commit `6d3144a`): 1
+  fixed-verified (TRA-C6-010 fixed in commit `6d3144a`): 1
+  fixed-verified (TRA-E6-001 WARNING fixed in R6 Batch 1 commit `6d3144a`): 1
+  new: 13
+  partial (R6 Batch 1 commit `6d3144a` fixed the string→list crash but did NOT rename the deprecated keys): 1
+  partial (TRA-A5-003 → 4 of 5 exception types produce EXCEPTION_HANDLER records at HEAD; EntityAmbiguity is the remaining 1 of 5): 1
+  partial (TRA-B6-005 verified the basic `_sanitize_exc_repr` works for `sk-` and `Bearer ` patterns; TRA-B7-002 identifies the `Authorization:` alternative gap): 1
+  persistent (R6 tracked as INFO B6-009; R7 escalates to WARNING because dynamic reproduction confirms the token is leaked, not just potentially leaked): 1
+  persistent (carry-over from B6-007): 1
+  persistent (carry-over from B6-012): 1
+  persistent (carry-over from C6-008; R6 Batch 1 did not touch implementation_plan.md's dependencies table): 1
+  persistent (carry-over from C6-009; R6 Batch 1 did not touch README.md audit references): 1
+  persistent (carry-over from C6-011): 1
+  persistent (carry-over from D6-003; R6 Batch 1 did not address): 1
+  persistent (carry-over from D6-004): 1
+  persistent (carry-over from D6-007; R6 Batch 1 fixed 4 of the original sites, but 4 remain): 1
+  persistent (carry-over from D6-008): 1
+  persistent (carry-over from D6-009): 1
+  persistent (carry-over from D6-010 / TRA-D5-003): 1
+  persistent (carry-over from D6-012): 1
+  persistent (carry-over from D6-013): 1
+  persistent (carry-over from D6-018): 1
+  persistent (carry-over from D6-019): 1
+  persistent (carry-over from E6-003, cross-ref A6-001 / A7-001): 1
+  persistent (carry-over from E6-012 / TRA-E5-013): 1
+  persistent (carry-over from F6-009): 2
+  persistent (carry-over from R5 A5-015; R6 re-confirmed): 1
+  persistent (pre-existed since Phase 2/3 commit `84753ad`; exposed by R5 Batch H per-leaf translation): 1
+  persistent (root cause pre-existed in `tra/isa.py:461-468` cache-hit early return since Phase 2/3; A5-003 made the gap visible by adding EXCEPTION_HANDLER records on cache miss): 1
+  persistent residual (introduced by R5 Batch H commit `f782043` — added per-leaf translation + `segment_index` parameter, but kernel call site not updated): 1
+  verified-holding (TRA-A6-006 re-confirmed): 1
+  verified-holding (TRA-A6-007 re-confirmed): 1
+  verified-holding (TRA-A6-008 re-confirmed): 1
+  verified-holding (TRA-A6-010 re-confirmed): 1
+  verified-holding (TRA-A6-011 re-confirmed): 1
+  verified-holding (TRA-A6-012 re-confirmed): 1
+  verified-holding (TRA-B6-001 re-confirmed): 1
+  verified-holding (TRA-B6-002 re-confirmed): 1
+  verified-holding (TRA-B6-003 re-confirmed): 1
+  verified-holding (TRA-B6-010 re-confirmed): 1
+  verified-holding (TRA-B6-011 re-confirmed; TRA-B7-001 identifies deprecated key names): 1
+  verified-holding (TRA-B6-013 re-confirmed): 1
+  verified-holding (TRA-B6-014 re-confirmed): 1
+  verified-holding (TRA-B6-016 re-confirmed): 1
+  verified-holding (TRA-C6-014 re-confirmed): 1
+  verified-holding (TRA-D6-014 re-confirmed): 1
+  verified-holding (TRA-D6-016 re-confirmed): 1
+  verified-holding (TRA-D6-020 re-confirmed): 1
+  verified-holding (TRA-E6-007 re-confirmed): 1
+  verified-holding (TRA-E6-008 re-confirmed): 1
+  verified-holding (TRA-E6-009 re-confirmed): 1
+  verified-holding (TRA-E6-010 re-confirmed; TRA-E7-002 identifies the cache-hit suppression gap): 1
+  verified-holding (TRA-E6-011 re-confirmed): 1
+  verified-holding (TRA-F6-001 re-confirmed): 1
+  verified-holding (TRA-F6-002 re-confirmed): 1
+  verified-holding (TRA-F6-003 re-confirmed): 1
+  verified-holding (TRA-F6-004 re-confirmed): 1
+  verified-holding (TRA-F6-005 re-confirmed): 1
+  verified-holding (TRA-F6-006 re-confirmed): 1
+  verified-holding (TRA-F6-007 re-confirmed): 1
+
+By category (top 10):
+   13  Uncategorized
+    4  Doc-vs-Code Consistency / R6 Batch 1 Fix Verification
+    3  Test Suite / Test Isolation
+    2  Security / OWASP A09 (Security Logging and Monitoring Failures)
+    2  Test Suite / Portability
+    2  Spec Conformance / Exception Recovery (§6)
+    1  Spec Conformance / L4 Forensic Traceability (§8 L4, TRA-001 Phase 8)
+    1  Spec Conformance / L4 Audit-Trail Completeness (§7, §8 L4)
+    1  Code Quality / Tooling Configuration (TRA-D5-011, TRA-094)
+    1  Doc-vs-Code Consistency / Stale HEAD Reference
