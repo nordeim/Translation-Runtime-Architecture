@@ -290,10 +290,13 @@ Expected mutation score: **≥80%** (target: 90%+). The configuration is in
 
 ```toml
 [tool.mutmut]
-paths_to_mutate = "tra"
-tests_dir = "tests"
+source_paths = ["tra"]
 max_stack_depth = 5
 ```
+
+> **R7 B7-001 fix:** the deprecated `paths_to_mutate` and `tests_dir` keys
+> were renamed/removed in mutmut 3.6+. Use `source_paths` (list) instead of
+> `paths_to_mutate`; `tests_dir` is auto-detected by pytest.
 
 To view results: `mutmut results`. To see a specific survived mutation:
 `mutmut show <mutation-id>`.

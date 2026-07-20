@@ -5086,39 +5086,75 @@ class TestTRA_D5_011_MutationTestingConfigured:
         """RED: mutmut must be listed in pyproject.toml dev deps."""
         from pathlib import Path
 
-        pyproject = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/pyproject.toml"
-        ).read_text()
+        pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+        text = pyproject.read_text()
         # Check that mutmut is in the dev optional-dependencies.
-        assert "mutmut" in pyproject, (
+        assert "mutmut" in text, (
             "TRA-D5-011: mutmut must be listed in pyproject.toml "
             "[project.optional-dependencies] dev = [...]"
         )
 
     def test_mutmut_tool_section_configured(self) -> None:
-        """RED: [tool.mutmut] section must exist in pyproject.toml."""
+        """RED: [tool.mutmut] section must exist in pyproject.toml.
+        R7 B7-001: renamed `paths_to_mutate` -> `source_paths` (mutmut 3.6+
+        deprecation). Also removed `tests_dir` (auto-detected by pytest).
+        """
+        import tomllib
         from pathlib import Path
 
-        pyproject = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/pyproject.toml"
-        ).read_text()
-        assert "[tool.mutmut]" in pyproject, (
-            "TRA-D5-011: [tool.mutmut] section must exist in pyproject.toml "
-            "with paths_to_mutate targeting the tra/ package."
+        pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+        with pyproject.open("rb") as f:
+            cfg = tomllib.load(f)
+        mm = cfg.get("tool", {}).get("mutmut")
+        assert mm is not None, (
+            "TRA-D5-011: [tool.mutmut] section must exist in pyproject.toml"
         )
-        # Verify the section configures paths_to_mutate.
-        assert "paths_to_mutate" in pyproject, (
-            "TRA-D5-011: [tool.mutmut] must set paths_to_mutate = 'tra'"
+        # R7 B7-001: verify the new (non-deprecated) key is used.
+        assert "source_paths" in mm, (
+            "TRA-B7-001: [tool.mutmut] must set source_paths = ['tra'] "
+            "(renamed from paths_to_mutate in mutmut 3.6+)"
+        )
+        assert mm["source_paths"] == ["tra"], (
+            f"TRA-D5-011: source_paths must be ['tra'], got {mm['source_paths']!r}"
+        )
+        # R7 B7-001: verify the deprecated keys are NOT used.
+        assert "paths_to_mutate" not in mm, (
+            "TRA-B7-001: [tool.mutmut] must NOT use paths_to_mutate "
+            "(deprecated in mutmut 3.6+; renamed to source_paths)"
+        )
+        assert "tests_dir" not in mm, (
+            "TRA-B7-001: [tool.mutmut] must NOT use tests_dir "
+            "(deprecated in mutmut 3.6+; pytest is auto-detected)"
+        )
+
+    def test_mutmut_run_help_no_deprecation_warnings(self) -> None:
+        """R7 B7-001: `mutmut run --help` must NOT emit DeprecationWarning.
+        Previously (HEAD 6d3144a), the deprecated `paths_to_mutate` and
+        `tests_dir` keys caused mutmut 3.6+ to warn on every invocation.
+        """
+        import subprocess
+
+        result = subprocess.run(
+            ["mutmut", "run", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        combined = result.stdout + result.stderr
+        assert "DeprecationWarning" not in combined, (
+            f"TRA-B7-001: mutmut emitted DeprecationWarning:\n{combined}"
+        )
+        assert "deprecated" not in combined.lower(), (
+            f"TRA-B7-001: mutmut emitted deprecation notice:\n{combined}"
         )
 
     def test_mutation_testing_workflow_documented(self) -> None:
         """RED: SKILL.md §7 must document the mutation testing workflow."""
         from pathlib import Path
 
-        skill = Path(
-            "/home/z/my-project/Translation-Runtime-Architecture/tra-prototype/SKILL.md"
-        ).read_text()
-        assert "mutmut" in skill.lower(), (
+        skill = Path(__file__).resolve().parent.parent / "SKILL.md"
+        text = skill.read_text()
+        assert "mutmut" in text.lower(), (
             "TRA-D5-011: SKILL.md §7 must document the mutation testing "
             "workflow (how to run mutmut, expected mutation score)."
         )
