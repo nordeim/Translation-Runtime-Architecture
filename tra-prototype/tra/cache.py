@@ -102,12 +102,25 @@ class CacheKeyContext(BaseModel):
 
 
 class TranslationResult(BaseModel):
-    """A cached translation decision with its evidence references."""
+    """A cached translation decision with its evidence references.
+
+    TRA-A7-001 (round 7): `audit_side_effects` captures EXCEPTION_HANDLER
+    audit records emitted during the cache-miss translation (e.g., UnknownTerm
+    records for unrecognized CJK tokens). On cache hit, these records are
+    re-emitted via `audit.append(...)` so the L4 audit trail remains complete
+    across warm-cache runs. Previously the cache-hit early-return at
+    isa.py:461-465 bypassed emission entirely, so the L4 audit trail was
+    complete only on the first run after a cache invalidation.
+    """
 
     translation: str
     evidence_ids: list[str] = Field(default_factory=list)
     cache_hit: bool = Field(default=False, description="True if served from cache")
     created_at: str | None = None
+    # JSON-serializable audit side-effects. Each entry is a dict with keys:
+    #   isa_instruction: str, input_hash: str, evidence_chain: list[str],
+    #   artifact_snapshot: dict, flags_raised: list[str] | None
+    audit_side_effects: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TranslationCache:

@@ -17,6 +17,7 @@ import hashlib
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from .anchor import build_structural_map
 from .cache import CacheKeyContext, TranslationCache, TranslationResult
@@ -494,7 +495,29 @@ def translate_segment(
     cached = cache.get(cache_key)
     if cached is not None:
         audit.append("TRANSLATE_SEGMENT", cache_key, cached.evidence_ids)
+        # TRA-A7-001 (round 7): re-emit the EXCEPTION_HANDLER audit records
+        # that were produced on the cache-miss run. Previously the cache-hit
+        # early-return bypassed emission entirely, so the L4 audit trail was
+        # complete only on the first run after a cache invalidation. The
+        # side_effects list is populated on cache-miss (see below) and
+        # stored alongside the translation in the cache.
+        for side_effect in cached.audit_side_effects:
+            snapshot = side_effect.get("artifact_snapshot")
+            flags = side_effect.get("flags_raised")
+            audit.append(
+                str(side_effect.get("isa_instruction", "EXCEPTION_HANDLER")),
+                str(side_effect.get("input_hash", "")),
+                list(side_effect.get("evidence_chain", [])),
+                artifact_snapshot=dict(snapshot) if snapshot else None,
+                flags_raised=list(flags) if flags else None,
+            )
         return cached
+
+    # TRA-A7-001 (round 7): snapshot the audit buffer length BEFORE the
+    # translation produces any EXCEPTION_HANDLER records. After translation,
+    # any new records in the buffer are side-effects of THIS call and should
+    # be captured in `audit_side_effects` for cache-hit re-emission.
+    _audit_buffer_start = len(audit._buffer)
 
     if llm_translate is not None:
         try:
@@ -587,6 +610,11 @@ def translate_segment(
         # audit_trace.jsonl so L4 forensic analysis can reconstruct which
         # terms were unknown. Non-halting — translation continues with
         # the partial result.
+        # TRA-A7-001 (round 7): also capture each EXCEPTION_HANDLER record
+        # in `audit_side_effects` so it can be re-emitted on cache hits.
+        # Previously the cache-hit early-return bypassed emission entirely,
+        # so the L4 audit trail was complete only on the first run after
+        # a cache invalidation.
         for token in unknown_tokens:
             audit.append(
                 "EXCEPTION_HANDLER",
@@ -605,6 +633,30 @@ def translate_segment(
                 flags_raised=["WARNING"],
             )
 
+    # TRA-A7-001 (round 7): collect the EXCEPTION_HANDLER audit records
+    # emitted during THIS cache-miss translation (records appended after
+    # _audit_buffer_start) so they can be re-emitted on cache hits. We read
+    # from the audit trail's in-memory buffer (the records have not been
+    # flushed to disk yet). Only UNKNOWN_TERM records are captured because
+    # those are the side-effects of the rule-translate path; CertaintyConflict
+    # raises and propagates to the kernel's _recover (not a side-effect of
+    # this function).
+    audit_side_effects: list[dict[str, Any]] = []
+    for record in audit._buffer[_audit_buffer_start:]:
+        if (
+            record.isa_instruction == "EXCEPTION_HANDLER"
+            and record.input_hash == "UNKNOWN_TERM"
+        ):
+            audit_side_effects.append(
+                {
+                    "isa_instruction": record.isa_instruction,
+                    "input_hash": record.input_hash,
+                    "evidence_chain": list(record.evidence_chain),
+                    "artifact_snapshot": dict(record.artifact_snapshot or {}),
+                    "flags_raised": list(record.flags_raised or []),
+                }
+            )
+
     rec = EvidenceRecord(
         type=EvidenceType.LLM_DECISION,
         module="isa.translate_segment",
@@ -614,7 +666,10 @@ def translate_segment(
     )
     ev_id = evidence.add(rec)
     result = TranslationResult(
-        translation=target, evidence_ids=[ev_id], cache_hit=False
+        translation=target,
+        evidence_ids=[ev_id],
+        cache_hit=False,
+        audit_side_effects=audit_side_effects,
     )
     cache.set(cache_key, result)
     audit.append("TRANSLATE_SEGMENT", cache_key, [ev_id])

@@ -4277,6 +4277,88 @@ class TestTRA_A5_003_ExceptionsRoutedThroughKernelRecover:
             f"(or PRESERVE_SOURCE per recovery.py), got {snapshot.get('action')!r}"
         )
 
+    def test_cache_hit_preserves_exception_handler_records(self) -> None:
+        """R7 A7-001 (round 7): When the same source is translated twice
+        with a shared cache, the second run (cache hit) must re-emit the
+        EXCEPTION_HANDLER records for UnknownTerm that were produced on
+        the first run (cache miss). Previously the cache-hit early-return
+        at isa.py:461-465 bypassed emission entirely, so the L4 audit
+        trail was complete only on the first run after a cache invalidation.
+        """
+        import json
+        import os
+
+        from tra.config import BootstrapConfig
+        from tra.kernel import TRAKernel
+
+        # Shared cache directory for both runs.
+        cache_dir = tempfile.mkdtemp() + "/cache"
+        # Run 1: cold cache.
+        audit_fd_1, audit_path_1 = tempfile.mkstemp(suffix=".jsonl")
+        os.close(audit_fd_1)
+        os.unlink(audit_path_1)
+        cfg1 = BootstrapConfig.from_yaml("config.yaml").model_copy(
+            update={
+                "audit_trace": audit_path_1,
+                "cache_directory": cache_dir,
+            }
+        )
+        kernel1 = TRAKernel(cfg1)
+        # Source with an unknown CJK token (not in glossary, epistemic,
+        # or entity tables). "项目概述" contains "项目" and "概述" — both unknown.
+        source = "项目概述"
+        kernel1.run(source)
+        with open(audit_path_1, encoding="utf-8") as f:
+            run1_records = [json.loads(line) for line in f]
+        run1_exception_records = [
+            r for r in run1_records if r.get("isa_instruction") == "EXCEPTION_HANDLER"
+        ]
+        run1_unknown_term_records = [
+            r for r in run1_exception_records if r.get("input_hash") == "UNKNOWN_TERM"
+        ]
+        assert run1_unknown_term_records, (
+            "Run 1 (cold cache): expected at least one EXCEPTION_HANDLER "
+            "record with input_hash='UNKNOWN_TERM'. Got "
+            f"{len(run1_exception_records)} EXCEPTION_HANDLER records."
+        )
+
+        # Run 2: warm cache (same cache_directory, same source).
+        audit_fd_2, audit_path_2 = tempfile.mkstemp(suffix=".jsonl")
+        os.close(audit_fd_2)
+        os.unlink(audit_path_2)
+        cfg2 = BootstrapConfig.from_yaml("config.yaml").model_copy(
+            update={
+                "audit_trace": audit_path_2,
+                "cache_directory": cache_dir,  # SAME cache — warm hit expected
+            }
+        )
+        kernel2 = TRAKernel(cfg2)
+        kernel2.run(source)
+        with open(audit_path_2, encoding="utf-8") as f:
+            run2_records = [json.loads(line) for line in f]
+        run2_exception_records = [
+            r for r in run2_records if r.get("isa_instruction") == "EXCEPTION_HANDLER"
+        ]
+        run2_unknown_term_records = [
+            r for r in run2_exception_records if r.get("input_hash") == "UNKNOWN_TERM"
+        ]
+        # R7 A7-001: Run 2 must re-emit the EXCEPTION_HANDLER records
+        # that Run 1 produced. Otherwise the L4 audit trail is incomplete
+        # for warm-cache runs.
+        assert run2_unknown_term_records, (
+            "TRA-A7-001: Run 2 (warm cache) should re-emit the EXCEPTION_HANDLER "
+            "records for UnknownTerm that Run 1 produced. Got "
+            f"{len(run2_exception_records)} EXCEPTION_HANDLER records, "
+            f"{len(run2_unknown_term_records)} with UNKNOWN_TERM code. "
+            f"Run 1 had {len(run1_unknown_term_records)} UNKNOWN_TERM records."
+        )
+        # The count should match Run 1's count (one per unknown token).
+        assert len(run2_unknown_term_records) == len(run1_unknown_term_records), (
+            f"TRA-A7-001: Run 2 should re-emit the same number of UNKNOWN_TERM "
+            f"records as Run 1. Run 1: {len(run1_unknown_term_records)}, "
+            f"Run 2: {len(run2_unknown_term_records)}."
+        )
+
     def test_unknown_term_still_appears_in_ambiguity_register(self) -> None:
         """SANITY: After the refactor, the L4 ambiguity_register should
         still contain the unknown-term entries (the recovery procedure
