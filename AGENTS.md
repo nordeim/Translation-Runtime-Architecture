@@ -38,7 +38,7 @@ Specification-first repo. TRA = Translation Runtime Architecture v1.0 — normat
 | `tra-prototype/SKILL.md` | User + agent guidance for the prototype engine (setup, CLI, conformance levels, quality gates, known limitations, audit remediation status). |
 | `tra-prototype/README.md` | Prototype-specific install + commands + architecture + known gaps. |
 | `tra-prototype/tra/` | The engine source — 16 modules (kernel, isa, memory, policy, cache, anchor, config, exceptions, recovery, hitl, reporting, validate, benchmark, diagnostics, utils + modules/ subpackage). |
-| `tra-prototype/tests/` | 323 tests across 16 files — see `tra-prototype/SKILL.md` §7 for the full inventory. |
+| `tra-prototype/tests/` | 328 tests across 16 files — see `tra-prototype/SKILL.md` §7 for the full inventory. |
 | `tra-prototype/pyproject.toml` | 6 runtime deps + 4 dev deps (ruff, mypy, pytest, mutmut). See `implementation_plan.md` "Dependencies" table. |
 
 ### Audit deliverables (`docs/audit/`)

@@ -91,6 +91,17 @@ Audit target against source + runtime constraints. Checks: structural
 (heading/table/list/blockquote/HR/fence counts), factual (version/date
 preservation), entity, terminology, epistemic. Never self-scores.
 
+> **TRA-E5-013 / TRA-E7-009 (round 7):** at L3_STRICT/L4_FORENSIC, the
+> kernel calls `verify_output` TWICE:
+> 1. Before the repair loop — to generate initial diagnostics that feed
+>    `REPAIR_SEGMENT`.
+> 2. After the repair loop + `_rewrite_anchors` — as the final L3 gate
+>    check on the post-repair, post-rewrite target (the one actually emitted).
+>
+> The audit trail records both calls as separate `VERIFY_OUTPUT` records;
+> an L4 auditor can reconstruct the pipeline state at each checkpoint by
+> comparing the two. This is intentional, not a bug.
+
 ### `repair_segment(target_segment, source_segment, diagnostic, ctx, evidence, audit, *, attempt=1, max_retries=3, segment_index=0) -> str`
 
 Surgically resolve a single diagnostic. Raises `Unrecoverable` if the

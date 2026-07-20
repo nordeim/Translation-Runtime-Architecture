@@ -142,6 +142,13 @@ Additional L3/L4 gates enforced in-band:
   (not after); if any `BROKEN_LINK` entries appear in `unresolved_ambiguities`,
   the kernel raises `ConformanceFailure`. This also ensures the audit trail's
   `VERIFY_OUTPUT` hash matches the emitted target (L4 hash-chain integrity).
+- **Double VERIFY_OUTPUT at L3+** (TRA-E5-013 / TRA-E7-009): at L3/L4, the
+  kernel calls `verify_output` TWICE — (1) before the repair loop to
+  generate initial diagnostics, and (2) after the repair loop +
+  `_rewrite_anchors` as the final L3 gate check on the post-repair target.
+  The audit trail records both calls as separate `VERIFY_OUTPUT` records;
+  an L4 auditor can reconstruct the pipeline state at each checkpoint by
+  comparing the two. This is intentional, not a bug.
 
 Writes the translated markdown **plus** runtime artifacts (glossary, entity
 table, structural map, style profile, execution log, repair history, audit
@@ -250,7 +257,7 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **323 tests** across 16 test
+All four gates must be green. The full suite is **328 tests** across 16 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
   (71 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
@@ -430,8 +437,8 @@ pending spec change). All other R5 findings are fixed. See
 machine-readable R6 register.
 
 **Round 7 remediation** (commits `e54e557` through latest, HEAD at end of R7
-Batches 1-3): 9 of 9 outstanding R7 WARNING findings fixed via TDD + doc
-updates. Test count 309 → 323 (+14 new tests).
+Batches 1-7): 9 of 9 outstanding R7 WARNING findings + 10 of 14 outstanding
+R7 INFO findings fixed via TDD + doc updates. Test count 309 → 328 (+19 new tests).
 - **Batch 1** (commit `e54e557`): TRA-B7-002 — Authorization header regex
   now consumes BOTH scheme AND credential (`Authorization: Bearer <jwt>` →
   `[REDACTED]`, not `[REDACTED] <jwt>`). OWASP A09 fix. +6 tests.
@@ -452,11 +459,24 @@ updates. Test count 309 → 323 (+14 new tests).
 - **Batch 2.5** (commit `fcc902c`): TRA-A7-002 — added `segment_index:
   int | None = None` field to Diagnostic; _repair_loop now plumbs it to
   repair_segment → RepairAttempt for L4 forensic traceability. +3 tests.
-- **Batch 3** (this commit): doc updates — implementation_plan.md HEAD pin
-  (`805a8f8` → `6d3144a`), README.md Audit History section, status.md banner
-  HEAD pin, AGENTS.md test count + Round 6/7 references, CLAUDE.md test
-  count + Round 6/7 references, SKILL.md test count + R7 remediation log
-  entry, TRA-MODULE-AUTHORING.md §2.7 parameter name fix (`source` → `text`).
+- **Batch 3** (commit `673b5a0`): doc updates — implementation_plan.md HEAD
+  pin, README.md Audit History section, status.md banner, AGENTS.md +
+  CLAUDE.md test count + Round 6/7 references, TRA-MODULE-AUTHORING.md §2.7
+  parameter name fix.
+- **Batch 4** (commit `06ea18b`): TRA-B7-003 + TRA-B7-004 — removed pickle
+  backward-compat else branch in cache.get (OWASP A08); typed `_cache` as
+  `diskcache.Cache | None` via TYPE_CHECKING. +1 test.
+- **Batch 5** (commit `7376af4`): TRA-A7-003 + TRA-A7-005 — deduped
+  LIST_ITEM/PARAGRAPH leaf segments (was producing duplicate
+  TRANSLATE_SEGMENT records); wrapped _execute_translation + verify_output
+  in try/except TRAException (Spec §6 compliance). +3 tests.
+- **Batch 6** (commit `fdcd44d`): TRA-D7-005/006/007/008 — test isolation
+  (3 sites in test_isa.py + test_l4_forensic_trace cache_directory override),
+  test portability (/tmp/test_tra071*.jsonl → tmp_path), strengthened
+  TestTRA033 audit-trail assertions. +1 test.
+- **Batch 7** (this commit): TRA-E7-009 doc — documented the double
+  VERIFY_OUTPUT behavior at L3+ in SKILL.md §4 + docs/api-reference.md.
+  Updated test count to 328.
 
 See `../docs/audit/round7/master_findings_register_r7.json` for the full
 machine-readable R7 register.
