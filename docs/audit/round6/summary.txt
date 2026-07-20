@@ -1,0 +1,31 @@
+TRA Round 6 Audit — Master Findings Register Summary
+============================================================
+
+HEAD audited: c4ecd41
+Total findings (deduplicated): 76
+
+By severity (all findings, including positive verifications):
+  BLOCKING  : 5
+  WARNING   : 10
+  INFO      : 61
+
+By finding type:
+  positive_verification    : 18
+  issue                    : 58
+
+Issues only (excluding positive verifications):
+  Total issues: 58
+  BLOCKING  : 4
+  WARNING   : 10
+  INFO      : 44
+
+By track:
+  A6: 11
+  B6: 16
+  C6: 14
+  D6: 19
+  E6: 11
+  F6: 8
+
+By Round 4 status (normalized):
+  new                      : 76
