@@ -1735,6 +1735,89 @@ class TestTRA078SecretRedaction:
 
 
 # =========================================================================
+# TRA-B7-002 (round 7) — Authorization header regex must redact full credential
+# (OWASP A09). R6 B6-009 was INFO; R7 escalates to WARNING because dynamic
+# reproduction confirms the JWT token is leaked, not just potentially leaked.
+# =========================================================================
+
+
+class TestTRA_B7_002_AuthorizationHeaderRegex:
+    """TRA-B7-002 (round 7): the _SECRET_RE regex's `Authorization:` alternative
+    must consume BOTH the scheme AND the credential that follows, not just the
+    scheme. Otherwise `Authorization: Bearer <jwt>` becomes `[REDACTED] <jwt>`
+    and the JWT is leaked into the audit trail.
+    """
+
+    def test_authorization_bearer_jwt_redacted(self) -> None:
+        """RED: Authorization: Bearer <jwt> must NOT leak the JWT."""
+        from tra.kernel import _sanitize_exc_repr
+
+        jwt_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.secrettoken123"
+        exc = Exception(f"HTTP 401: Authorization: Bearer {jwt_token}")
+        sanitized = _sanitize_exc_repr(exc)
+        assert jwt_token not in sanitized, (
+            f"JWT token leaked into audit trail: {sanitized!r}"
+        )
+        assert "[REDACTED]" in sanitized, (
+            f"expected [REDACTED] marker in sanitized output: {sanitized!r}"
+        )
+
+    def test_authorization_basic_redacted(self) -> None:
+        """RED: Authorization: Basic <base64> must NOT leak the base64 cred."""
+        from tra.kernel import _sanitize_exc_repr
+
+        cred = "dXNlcjpwYXNzMTIzNDU="  # base64("user:pass12345")
+        exc = Exception(f"HTTP 401: Authorization: Basic {cred}")
+        sanitized = _sanitize_exc_repr(exc)
+        assert cred not in sanitized, (
+            f"Basic credential leaked into audit trail: {sanitized!r}"
+        )
+        assert "[REDACTED]" in sanitized
+
+    def test_authorization_digest_redacted(self) -> None:
+        """RED: Authorization: Digest <token> must NOT leak the token."""
+        from tra.kernel import _sanitize_exc_repr
+
+        token = 'username="admin", realm="api", nonce="abc123", response="def456"'
+        exc = Exception(f"HTTP 401: Authorization: Digest {token}")
+        sanitized = _sanitize_exc_repr(exc)
+        assert "def456" not in sanitized, (
+            f"Digest response leaked into audit trail: {sanitized!r}"
+        )
+        assert "[REDACTED]" in sanitized
+
+    def test_standalone_bearer_still_redacted(self) -> None:
+        """GREEN check: standalone `Bearer <token>` (no Authorization: prefix)
+        must still be redacted by the dedicated Bearer alternative."""
+        from tra.kernel import _sanitize_exc_repr
+
+        token = "eyJhbGc.standalonetoken456"
+        exc = Exception(f"Bearer {token}")
+        sanitized = _sanitize_exc_repr(exc)
+        assert token not in sanitized, f"Standalone Bearer token leaked: {sanitized!r}"
+        assert "[REDACTED]" in sanitized
+
+    def test_sk_api_key_still_redacted(self) -> None:
+        """GREEN check: `sk-<apikey>` must still be redacted."""
+        from tra.kernel import _sanitize_exc_repr
+
+        key = "sk-abcdefghijklmnop123456"
+        exc = Exception(f"OpenAI error: invalid key {key}")
+        sanitized = _sanitize_exc_repr(exc)
+        assert key not in sanitized, f"sk- API key leaked: {sanitized!r}"
+        assert "[REDACTED]" in sanitized
+
+    def test_api_key_param_still_redacted(self) -> None:
+        """GREEN check: `api_key=<value>` must still be redacted."""
+        from tra.kernel import _sanitize_exc_repr
+
+        exc = Exception("Connection failed: api_key=realapikey789")
+        sanitized = _sanitize_exc_repr(exc)
+        assert "realapikey789" not in sanitized, f"api_key param leaked: {sanitized!r}"
+        assert "[REDACTED]" in sanitized
+
+
+# =========================================================================
 # TRA-097 (round 3) — register() must validate LanguageModuleProtocol
 # =========================================================================
 

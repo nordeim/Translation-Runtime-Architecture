@@ -107,9 +107,23 @@ _KERNEL_ORDER: list[KernelState] = [
 # TRA-078: redact potential secrets from exception repr before storing in
 # the audit trail. Matches common LLM-client secret patterns: API keys
 # (sk-...), Bearer tokens, Authorization headers, api_key parameters.
+# TRA-B7-002 (round 7): the Authorization alternative now consumes BOTH
+# the scheme AND the credential that follows (e.g. "Authorization: Bearer
+# <jwt>" or "Authorization: Basic <base64>"). Previously the regex only
+# matched up to the first whitespace ("Authorization: Bearer"), leaving
+# the actual credential (JWT, base64 password, digest response) exposed
+# in the audit trail — an OWASP A09 defect dynamically reproduced in R7.
+# The Authorization alternative matches `Authorization:` + scheme + ALL
+# following non-whitespace tokens (greedy). This may over-redact trailing
+# non-credential text in the same line, but over-redaction is safe while
+# under-redaction leaks secrets. For complex schemes like Digest (which
+# uses comma-separated key="value" pairs), the entire credential string
+# is consumed up to the end of the line.
 _SECRET_RE = re.compile(
-    r"(sk-[A-Za-z0-9]{8,}|Bearer\s+[A-Za-z0-9._-]+|"
-    r"Authorization:\s*[^\s,;]+|api[_-]?key['\"]?\s*[:=]\s*['\"]?[^\s'\"]+)",
+    r"(sk-[A-Za-z0-9]{8,}"
+    r"|Bearer\s+[A-Za-z0-9._-]+"
+    r"|Authorization:\s*\S+(?:\s+\S+)*"
+    r"|api[_-]?key['\"]?\s*[:=]\s*['\"]?[^\s'\"]+)",
     re.IGNORECASE,
 )
 
