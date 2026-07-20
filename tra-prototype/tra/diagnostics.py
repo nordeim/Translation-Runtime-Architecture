@@ -159,12 +159,22 @@ class AuditTrail:
         path: str | Path,
         *,
         clock: Callable[[], datetime] | None = None,
+        truncate: bool = False,
     ) -> None:
         self.path = Path(path)
         self._seq = 0
         self._buffer: list[AuditRecord] = []
         self._flushed = 0
         self._clock = clock or (lambda: datetime.now(UTC))
+        # TRA-E6-001 (round 6): truncate the audit trace file at construction
+        # so each CLI run starts fresh. Previously, the file was opened in
+        # append mode, so reusing the default CLI path across runs accumulated
+        # records from prior runs — breaking TRA-013 byte-reproducibility.
+        # `truncate=True` is opt-in (used by the kernel); tests that need
+        # append behavior (e.g., test_audit_trail_append_and_load) use the
+        # default `truncate=False`.
+        if truncate and self.path.exists():
+            self.path.unlink()
 
     def append(
         self,

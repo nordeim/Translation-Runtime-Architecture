@@ -73,20 +73,24 @@ mypy --strict tra
 
 - **LLM seam** (`translate_segment(..., llm_translate=...)`) is wired but not
   called — phrasing is rule-based (e.g. "may Confirmed" reads literally).
-- **Inline-code glossary substitution** IS now suppressed (TRA-001 partial):
-  fenced and inline code blocks are protected as no-translate zones. Full
-  per-leaf segment translation is still deferred.
+- **Inline-code glossary substitution** IS suppressed (TRA-001 fixed in
+  Round 5 Phase 8): fenced and inline code blocks are protected as
+  no-translate zones, and translation operates per-leaf-segment via
+  `StructuralMap.iter_leaf_segments()`.
 - **Segment-level parallelism** (`asyncio`) is not implemented — Phase 6.5.1
   open.
 - **Cross-run glossary/entity caching** — only the translation output is
   cached across runs; glossary/entity tables are rebuilt per run (Phase 6.5.2
   open).
 - **Phase 7** (ADRs, API reference, module authoring guide, conformance
-  self-audit) has not started.
-- **TRANSLATE_SEGMENT** currently operates on the whole document rather than
-  per leaf segment (TRA-001 partial); the kernel passes the full source to
-  `translate_segment`. This affects cache granularity,
-  `RepairAttempt.segment_index`, and the L4 line-by-line trace.
+  self-audit, spec cross-reference) is COMPLETE — see `docs/adr/README.md`,
+  `docs/api-reference.md`, `docs/conformance-self-audit.md`,
+  `docs/spec-cross-reference.md`, and `TRA-MODULE-AUTHORING.md`.
+- **TRANSLATE_SEGMENT** now operates per-leaf-segment (TRA-001 fixed in
+  Round 5 Phase 8): the kernel walks `ctx.structural_map.iter_leaf_segments()`
+  and calls `translate_segment` per leaf. This gives per-segment cache keys
+  and per-segment evidence chains. When an LLM callback is supplied,
+  whole-doc translation is used instead (backward compat).
 - **Module registry** (TRA-002, fixed in kernel; TRA-099 FIXED in Round 4
   Batch 1 commit `e54b7a7`): the kernel selects the language module from the
   registry when supplied (`TRAKernel(cfg, registry=)`); `as_interface()`

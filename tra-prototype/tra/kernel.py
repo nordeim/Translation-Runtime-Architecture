@@ -167,9 +167,13 @@ class TRAKernel:
         self._deterministic = deterministic
         self._source_hash_seed: str | None = None
         if deterministic:
-            self.audit = AuditTrail(config.audit_trace, clock=self._deterministic_clock)
+            self.audit = AuditTrail(
+                config.audit_trace,
+                clock=self._deterministic_clock,
+                truncate=True,
+            )
         else:
-            self.audit = AuditTrail(config.audit_trace)
+            self.audit = AuditTrail(config.audit_trace, truncate=True)
         self.ctx = RuntimeContext(
             configuration=config.model_dump(),
             style_profile=module.get_style_profile(),

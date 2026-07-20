@@ -48,10 +48,11 @@ An **optional LLM seam** (`llm_translate`) can be supplied by the caller; if it
 raises or returns empty/None output, the engine degrades to the rule path
 instead of failing (TRA-033).
 
-**Code-block protection** (TRA-001 partial): fenced (```` ``` ````) and inline
-(`` ` ``) code blocks are no-translate zones — extracted as placeholders before
-translation and restored verbatim after, so glossary terms inside backticks
-survive untranslated.
+**Code-block protection** (TRA-001 fixed in Round 5 Phase 8): fenced
+(```` ``` ````) and inline (`` ` ``) code blocks are no-translate zones —
+extracted as placeholders before translation and restored verbatim after, so
+glossary terms inside backticks survive untranslated. Translation operates
+per-leaf-segment via `StructuralMap.iter_leaf_segments()`.
 
 **Structural validation** (TRA-071): `analyze_document` performs a structural
 validation pass that raises `BrokenMarkdown` for unclosed fenced code blocks.
@@ -307,8 +308,8 @@ To view results: `mutmut results`. To see a specific survived mutation:
   fluency path and is caller-supplied via dependency injection
   (`TRAKernel.run(source, llm_translate=callback)` — TRA-D5-002 fixed in
   round 5). Code blocks (fenced and inline) are already protected from
-  glossary substitution (TRA-001 partial); full per-leaf-segment translation
-  is still deferred.
+  glossary substitution (TRA-001 fixed in Round 5 Phase 8 — per-leaf
+  segment translation via `StructuralMap.iter_leaf_segments()`).
 - **Dependencies trimmed** (TRA-017, fixed in Round 3): removed 6 unused
   deps (`litellm`, `structlog`, `pydantic-settings`, `mdit-py-plugins`,
   `black`, `pytest-asyncio`) from `pyproject.toml`. Install footprint
@@ -317,8 +318,12 @@ To view results: `mutmut results`. To see a specific survived mutation:
 - **No segment-level parallelism** — translation is sequential.
 - **Glossary/entity tables rebuilt per run** — only the translation output is
   cached across runs (diskcache).
-- **Phase 7 (docs/delivery) not started** — see `implementation_plan.md` for
-  the full per-item state.
+- **Phase 7 (docs/delivery) COMPLETE** — ADRs (`docs/adr/README.md`), API
+  reference (`docs/api-reference.md`), conformance self-audit
+  (`docs/conformance-self-audit.md`), spec cross-reference
+  (`docs/spec-cross-reference.md`), module authoring guide
+  (`TRA-MODULE-AUTHORING.md`). See `implementation_plan.md` for the
+  full per-item state.
 
 ### Audit remediation status
 
@@ -415,13 +420,11 @@ the 5-batch TDD remediation plan.
   Benchmark suite now at 24/24 spec cases (was 22/24). +2 cases.
 - TRA-100: created TRA-MODULE-AUTHORING.md guide (`aae0bca`). Phase 7 deliverable.
 
-**Remaining persistent findings** (not yet fixed): TRA-001 (partial, full
-per-leaf segment translation — Phase 8, ~16h, separate effort), TRA-040
-(EXCEPTION_HANDLER/HALT_ERROR not KernelStates — intentional design decision
-pending spec change), TRA-079 (cache HMAC integrity — INFO, low priority),
-TRA-094 (mutation testing framework — INFO, deferred). See
-`../docs/audit/round5/master_findings_register_r5.json` for the full
-machine-readable register.
+**Remaining persistent findings**: TRA-040 (EXCEPTION_HANDLER/HALT_ERROR not
+KernelStates — intentional design decision documented in KernelState docstring,
+pending spec change). All other R5 findings are fixed. See
+`../docs/audit/round6/master_findings_register_r6.json` for the full
+machine-readable R6 register.
 
 **Round 5 remediation** (commits `eb3d574` through `e75997f`, HEAD `e75997f`):
 28 of 46 R5 issues fixed via TDD across 4 batches. Test count 228 → 289 (+61).

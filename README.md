@@ -111,7 +111,7 @@ python -m tra_cli cache-clear
 
 **Status**
 
-Phases 0–6 are complete (foundation → Kernel/Policy orchestration → ZH-EN module → CLI + benchmark suite → hardening). Phase 7 (documentation & delivery) has not started. See `implementation_plan.md` for the item-by-item state and `CLAUDE.md` → "Prototype engine status" for layout and run commands.
+Phases 0–7 are complete (foundation → Kernel/Policy orchestration → ZH-EN module → CLI + benchmark suite → hardening → documentation & delivery). See `implementation_plan.md` for the item-by-item state and `CLAUDE.md` → "Prototype engine status" for layout and run commands.
 
 ## Invariants
 

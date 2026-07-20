@@ -4084,7 +4084,10 @@ class TestTRA_A5_003_ExceptionsRoutedThroughKernelRecover:
         os.close(audit_fd)
         os.unlink(audit_path)  # remove so kernel creates fresh
         cfg = BootstrapConfig.from_yaml("config.yaml").model_copy(
-            update={"audit_trace": audit_path}
+            update={
+                "audit_trace": audit_path,
+                "cache_directory": tempfile.mkdtemp() + "/cache",
+            }
         )
         kernel = TRAKernel(cfg)
         # Source with an unknown CJK token (not in glossary, epistemic,
@@ -4121,7 +4124,9 @@ class TestTRA_A5_003_ExceptionsRoutedThroughKernelRecover:
         from tra.config import BootstrapConfig
         from tra.kernel import TRAKernel
 
-        cfg = BootstrapConfig.from_yaml("config.yaml")
+        cfg = BootstrapConfig.from_yaml("config.yaml").model_copy(
+            update={"cache_directory": tempfile.mkdtemp() + "/cache"}
+        )
         kernel = TRAKernel(cfg)
         # Source with a token that matches multiple entity patterns.
         # "RustVMM" matches PRODUCT_RE (PascalCase) AND could match an
@@ -4163,7 +4168,10 @@ class TestTRA_A5_003_ExceptionsRoutedThroughKernelRecover:
         from tra.kernel import TRAKernel
 
         cfg = BootstrapConfig.from_yaml("config.yaml").model_copy(
-            update={"level": ConformanceLevel.L4_FORENSIC}
+            update={
+                "conformance_level": ConformanceLevel.L4_FORENSIC,
+                "cache_directory": tempfile.mkdtemp() + "/cache",
+            }
         )
         kernel = TRAKernel(cfg)
         source = "项目概述"
@@ -4686,10 +4694,10 @@ class TestTRA_D5_007InteractiveE2E:
         cfg = kernel_config.model_copy(
             update={"conformance_level": ConformanceLevel.L1_BASIC}
         )
-        kernel = TRAKernel(cfg, interactive=True)
-        # A source that triggers Unrecoverable in the repair loop.
-        # At L1, the pipeline doesn't enforce zero-BLOCKING, but the
-        # repair loop may still hit Unrecoverable for certain violations.
+        kernel = TRAKernel(cfg, interactive=True, force_unrecoverable=True)
+        # TRA-D6-006 (round 6): use --force-unrecoverable to actually trigger
+        # the HITL path. Previously used benign source that never triggered
+        # Unrecoverable, making the test vacuous.
         source = "# Test\n\nText.\n"
         target = kernel.run(source)
         # The pipeline should complete (HITL accepted the candidate).
@@ -4712,13 +4720,10 @@ class TestTRA_D5_007InteractiveE2E:
         cfg = kernel_config.model_copy(
             update={"conformance_level": ConformanceLevel.L1_BASIC}
         )
-        kernel = TRAKernel(cfg, interactive=True)
+        kernel = TRAKernel(cfg, interactive=True, force_unrecoverable=True)
         source = "# Test\n\nText.\n"
         target = kernel.run(source)
-        # If HITL fired, the override text should appear.
-        # (If HITL didn't fire because no Unrecoverable was raised, the
-        # test still passes — the override path is exercised in the
-        # unit test test_hitl_review_decision_override.)
+        # TRA-D6-006: HITL should fire via --force-unrecoverable.
         assert target, "interactive=True with override should produce output"
 
     def test_interactive_skip_keeps_candidate(
@@ -4735,7 +4740,7 @@ class TestTRA_D5_007InteractiveE2E:
         cfg = kernel_config.model_copy(
             update={"conformance_level": ConformanceLevel.L1_BASIC}
         )
-        kernel = TRAKernel(cfg, interactive=True)
+        kernel = TRAKernel(cfg, interactive=True, force_unrecoverable=True)
         source = "# Test\n\nText.\n"
         target = kernel.run(source)
         assert target, "interactive=True with skip should produce output"
@@ -4858,6 +4863,7 @@ class TestTRA_E5_003_EmptySourceRaisesBrokenMarkdown:
             update={
                 "audit_trace": audit_path,
                 "conformance_level": ConformanceLevel.L1_BASIC,
+                "cache_directory": tempfile.mkdtemp() + "/cache",
             }
         )
         kernel = TRAKernel(cfg)

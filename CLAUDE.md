@@ -12,7 +12,7 @@ There are **no build / lint / test commands for the specification documents**. "
 
 ## Prototype engine status (`tra-prototype/`)
 
-**Status (as of the current HEAD):** Phases 0–6 are complete — foundation (Phase 0), structural parsing/anchor resolution (Phase 1), the six ISA instructions (Phase 2), Kernel + Policy Engine orchestration (Phase 3), ZH-EN Language Module integration (Phase 4), CLI + artifacts + benchmark suite + L3 `validate` gate (Phase 5), and hardening: TRA-EXCEPTION recovery, human-in-the-loop hooks, L4 forensic artifacts, input sanitization, and LLM graceful degradation (Phase 6). **Phase 7 (documentation & delivery) has not started.** The full per-item state lives in `implementation_plan.md`; open items are 6.3.1 (structlog), 6.5.1 (asyncio parallelism), 6.5.2 (cross-run disk caching), and all of Phase 7.
+**Status (as of the current HEAD):** Phases 0–7 are complete — foundation (Phase 0), structural parsing/anchor resolution (Phase 1), the six ISA instructions (Phase 2), Kernel + Policy Engine orchestration (Phase 3), ZH-EN Language Module integration (Phase 4), CLI + artifacts + benchmark suite + L3 `validate` gate (Phase 5), hardening: TRA-EXCEPTION recovery, human-in-the-loop hooks, L4 forensic artifacts, input sanitization, and LLM graceful degradation (Phase 6), and documentation & delivery: ADRs, API reference, conformance self-audit, spec cross-reference, module authoring guide (Phase 7). Open feature-deferred items: 6.3.1 (structlog), 6.5.1 (asyncio parallelism), 6.5.2 (cross-run disk caching). The full per-item state lives in `implementation_plan.md`.
 
 **Layout (where behavior lives):**
 
