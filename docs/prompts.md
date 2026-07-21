@@ -82,3 +82,21 @@ Also, please meticulously plan to proceed with the remediation of any remaining 
 Please meticulously plan to review and update the SKILL.md for the TRA engine to be aligned with the latest codebase.
 Also create a tar archive of the skills that you used in the code audit phase for me to download and run them in the test environment.
 Finally commit all changes locally and `git push` to my GitHub repo using the ssh key and wrapper script.
+
+---
+
+Awesome meticulous job so far.  Please keep up the good work. Now, please meticulously review and validate the remaining (outstanding) issues and errors against the codebase to identify the root causes and optimal fixes. Then meticulously plan to create a comprehensive remediation plan with a detailed ToDo list to apply the validated optimal fixes; include in your analysis any previously identified issues and bugs that are still outstanding. Next, review and validate the remediation plan against the codebase again to ensure alignment before executing it meticulously. Use TDD approach to make code changes.
+
+Next, update the relevant documentation to ensure alignment with the remediated codebase.
+
+Finally, commit all code and document changes locally and then push to my GitHub repo
+
+
+---
+
+Yes, please meticulously plan to proceed with your best recommendations. but first re-evaluate and re-validate your findings to confirm root causes and the optiomal fixes.
+Finally, `git commit` all code and document changes locally and then `git push` them to my GitGub repo using the ssh key and wrapper script
+
+---
+
+
