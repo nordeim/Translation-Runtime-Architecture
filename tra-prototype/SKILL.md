@@ -257,7 +257,7 @@ mypy --strict tra        # gate 3: type check (20 source files)
 pytest tests             # gate 4: test suite
 ```
 
-All four gates must be green. The full suite is **328 tests** across 16 test
+All four gates must be green. The full suite is **329 tests** across 16 test
 files, including:
 - `test_outstanding_findings.py` — TDD regression tests named after finding IDs
   (71 test classes: TRA-001, 002, 004, 006, 007, 008, 009, 012, 013, 014, 016,
@@ -438,7 +438,7 @@ machine-readable R6 register.
 
 **Round 7 remediation** (commits `e54e557` through latest, HEAD at end of R7
 Batches 1-7): 9 of 9 outstanding R7 WARNING findings + 10 of 14 outstanding
-R7 INFO findings fixed via TDD + doc updates. Test count 309 → 328 (+19 new tests).
+R7 INFO findings fixed via TDD + doc updates. Test count 309 → 329 (+20 new tests).
 - **Batch 1** (commit `e54e557`): TRA-B7-002 — Authorization header regex
   now consumes BOTH scheme AND credential (`Authorization: Bearer <jwt>` →
   `[REDACTED]`, not `[REDACTED] <jwt>`). OWASP A09 fix. +6 tests.
@@ -474,9 +474,15 @@ R7 INFO findings fixed via TDD + doc updates. Test count 309 → 328 (+19 new te
   (3 sites in test_isa.py + test_l4_forensic_trace cache_directory override),
   test portability (/tmp/test_tra071*.jsonl → tmp_path), strengthened
   TestTRA033 audit-trail assertions. +1 test.
-- **Batch 7** (this commit): TRA-E7-009 doc — documented the double
+- **Batch 7** (commit `ab62c97`): TRA-E7-009 doc — documented the double
   VERIFY_OUTPUT behavior at L3+ in SKILL.md §4 + docs/api-reference.md.
   Updated test count to 328.
+- **Batch 8** (this commit): TRA-D7-008 — replaced 17 remaining hardcoded
+  `/tmp/` paths in test_outstanding_findings.py with `tmp_path` fixture
+  equivalents (AuditTrail, TranslationCache, BootstrapConfig paths across
+  8 test methods). Added `test_no_hardcoded_tmp_paths_in_test_files`
+  meta-test to prevent regression. Added `mutants/` to `.gitignore`
+  (artifact from `mutmut run`). Updated test count to 329.
 
 See `../docs/audit/round7/master_findings_register_r7.json` for the full
 machine-readable R7 register.

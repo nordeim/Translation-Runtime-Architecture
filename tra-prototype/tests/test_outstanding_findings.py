@@ -85,7 +85,7 @@ class TestTRA012SanitizeChokepoint:
     benchmark.py which call analyze_document directly.
     """
 
-    def test_analyze_document_strips_bidi_overrides(self) -> None:
+    def test_analyze_document_strips_bidi_overrides(self, tmp_path: Path) -> None:
         """analyze_document must strip bidi-override chars from the source
         before computing the input_hash, so the audit trail reflects the
         sanitized source.
@@ -97,7 +97,7 @@ class TestTRA012SanitizeChokepoint:
         bidi = "\u202e"  # right-to-left override
         source = f"# Heading\n\n成立 {bidi}evil{bidi}\n"
         ctx = RuntimeContext()
-        audit = AuditTrail("/tmp/test_audit_tra012.jsonl")
+        audit = AuditTrail(str(tmp_path / "test_audit_tra012.jsonl"))
         analyze_document(source, ctx, audit)
         # The structural map's text must NOT contain the bidi char.
         assert ctx.structural_map is not None
@@ -271,7 +271,7 @@ class TestTRA009PolicyDrivenSeverity:
     leakage from WARNING to BLOCKING (TRA-009).
     """
 
-    def test_canonical_term_leakage_is_blocking(self) -> None:
+    def test_canonical_term_leakage_is_blocking(self, tmp_path: Path) -> None:
         """A CANONICAL glossary term that appears untranslated in the target
         is a BLOCKING violation (P4 > P6)."""
         from tra.diagnostics import AuditTrail, EvidenceRegistry, Severity
@@ -285,14 +285,14 @@ class TestTRA009PolicyDrivenSeverity:
             DocumentProfile(type="x", register_="y", intent="z", audience="a"),
             ctx,
             ev,
-            AuditTrail("/tmp/test_tra009.jsonl"),
+            AuditTrail(str(tmp_path / "test_tra009.jsonl")),
         )
         # Confirm the glossary entry is CANONICAL.
         assert ctx.glossary_cache
         assert ctx.glossary_cache[0].status == GlossaryStatus.CANONICAL
         # Target still contains the untranslated source term.
         diags = verify_output(
-            "成立 here", "成立 here", ctx, AuditTrail("/tmp/test.jsonl")
+            "成立 here", "成立 here", ctx, AuditTrail(str(tmp_path / "test.jsonl"))
         )
         terminology = [d for d in diags if d.subsystem == "terminology"]
         assert terminology, "expected at least one terminology diagnostic"
@@ -417,7 +417,9 @@ class TestTRA033LLMSeamRobustness:
     @pytest.mark.parametrize(
         "exc_cls", [RuntimeError, ValueError, TypeError, OSError, TimeoutError]
     )
-    def test_llm_seam_degrades_on_each_exception_type(self, exc_cls: type) -> None:
+    def test_llm_seam_degrades_on_each_exception_type(
+        self, exc_cls: type, tmp_path: Path
+    ) -> None:
         """The except Exception catch must handle all exception types."""
         from tra.cache import TranslationCache
         from tra.diagnostics import AuditTrail, EvidenceRegistry
@@ -430,7 +432,7 @@ class TestTRA033LLMSeamRobustness:
                 source="成立", target="Confirmed", status=GlossaryStatus.CANONICAL
             )
         ]
-        cache = TranslationCache("/tmp/test_cache_tra033", enabled=False)
+        cache = TranslationCache(str(tmp_path / "test_cache_tra033"), enabled=False)
 
         def boom(_seg, _ctx):
             raise exc_cls("llm down")
@@ -440,13 +442,13 @@ class TestTRA033LLMSeamRobustness:
             ctx,
             cache,
             EvidenceRegistry(),
-            AuditTrail("/tmp/test.jsonl"),
+            AuditTrail(str(tmp_path / "test.jsonl")),
             llm_translate=boom,
         )
         # Must degrade to rule path, not raise.
         assert "Confirmed" in res.translation
 
-    def test_llm_seam_degrades_on_empty_string(self) -> None:
+    def test_llm_seam_degrades_on_empty_string(self, tmp_path: Path) -> None:
         """TRA-033 latent gap: llm_translate returning '' must degrade to the
         rule path, not silently produce an empty translation."""
         from tra.cache import TranslationCache
@@ -460,7 +462,7 @@ class TestTRA033LLMSeamRobustness:
                 source="成立", target="Confirmed", status=GlossaryStatus.CANONICAL
             )
         ]
-        cache = TranslationCache("/tmp/test_cache_tra033b", enabled=False)
+        cache = TranslationCache(str(tmp_path / "test_cache_tra033b"), enabled=False)
 
         def empty(_seg, _ctx):
             return ""
@@ -470,7 +472,7 @@ class TestTRA033LLMSeamRobustness:
             ctx,
             cache,
             EvidenceRegistry(),
-            AuditTrail("/tmp/test.jsonl"),
+            AuditTrail(str(tmp_path / "test.jsonl")),
             llm_translate=empty,
         )
         # Must degrade to rule path — not return "".
@@ -478,7 +480,7 @@ class TestTRA033LLMSeamRobustness:
             "empty LLM output must degrade to rule path, not produce empty translation"
         )
 
-    def test_llm_seam_degrades_on_none(self) -> None:
+    def test_llm_seam_degrades_on_none(self, tmp_path: Path) -> None:
         """TRA-033 latent gap: llm_translate returning None must degrade to the
         rule path, not crash."""
         from tra.cache import TranslationCache
@@ -492,7 +494,7 @@ class TestTRA033LLMSeamRobustness:
                 source="成立", target="Confirmed", status=GlossaryStatus.CANONICAL
             )
         ]
-        cache = TranslationCache("/tmp/test_cache_tra033c", enabled=False)
+        cache = TranslationCache(str(tmp_path / "test_cache_tra033c"), enabled=False)
 
         def returns_none(_seg, _ctx):
             return None
@@ -502,7 +504,7 @@ class TestTRA033LLMSeamRobustness:
             ctx,
             cache,
             EvidenceRegistry(),
-            AuditTrail("/tmp/test.jsonl"),
+            AuditTrail(str(tmp_path / "test.jsonl")),
             llm_translate=returns_none,
         )
         assert "Confirmed" in res.translation
@@ -1372,7 +1374,9 @@ class TestTRA006PolicyResolverInvokedInProduction:
     resolver is actually consulted.
     """
 
-    def test_monkeypatching_resolver_changes_terminology_severity(self) -> None:
+    def test_monkeypatching_resolver_changes_terminology_severity(
+        self, tmp_path: Path
+    ) -> None:
         """If PolicyResolver.resolve returns TARGET_FLUENCY, canonical term
         leakage must be WARNING (not BLOCKING) — proving the resolver is
         consulted in the production verify_output path."""
@@ -1413,7 +1417,10 @@ class TestTRA006PolicyResolverInvokedInProduction:
 
         # First, baseline: without monkeypatch, canonical leakage is BLOCKING.
         baseline_diags = verify_output(
-            target, source, ctx, AuditTrail("/tmp/test_tra006_baseline.jsonl")
+            target,
+            source,
+            ctx,
+            AuditTrail(str(tmp_path / "test_tra006_baseline.jsonl")),
         )
         baseline_term = [d for d in baseline_diags if d.subsystem == "terminology"]
         assert baseline_term, "expected at least one terminology diagnostic"
@@ -1427,7 +1434,10 @@ class TestTRA006PolicyResolverInvokedInProduction:
         with patch("tra.isa._POLICY_RESOLVER") as mock_resolver:
             mock_resolver.wins.return_value = False
             diags = verify_output(
-                target, source, ctx, AuditTrail("/tmp/test_tra006_mocked.jsonl")
+                target,
+                source,
+                ctx,
+                AuditTrail(str(tmp_path / "test_tra006_mocked.jsonl")),
             )
         term_diags = [d for d in diags if d.subsystem == "terminology"]
         assert term_diags, "expected at least one terminology diagnostic"
@@ -2722,7 +2732,9 @@ class TestTRA_F4_007_SelectModuleFullDirectionMatch:
             },
         )
 
-    def test_full_direction_match_preferred_over_source_only(self) -> None:
+    def test_full_direction_match_preferred_over_source_only(
+        self, tmp_path: Path
+    ) -> None:
         """When two modules share a source language but differ in target,
         _select_module must pick the one matching the FULL direction.
         """
@@ -2743,10 +2755,10 @@ class TestTRA_F4_007_SelectModuleFullDirectionMatch:
             conformance_level=ConformanceLevel.L3_STRICT,
             model_endpoint="rule-based",
             model_version="test",
-            base_dir="/tmp",
-            cache_directory="/tmp/cache",
-            compilation_dir="/tmp/art",
-            audit_trace="/tmp/audit.jsonl",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
         )
         kernel = TRAKernel(cfg, registry=registry)
         # The selected module must be fr_de (full direction match), not
@@ -2758,7 +2770,7 @@ class TestTRA_F4_007_SelectModuleFullDirectionMatch:
             f"_select_module is matching by source language only."
         )
 
-    def test_source_only_fallback_when_no_full_match(self) -> None:
+    def test_source_only_fallback_when_no_full_match(self, tmp_path: Path) -> None:
         """If no module matches the full direction, fall back to the first
         source-language match (backward compat with the old behavior)."""
         from tra.config import BootstrapConfig
@@ -2777,10 +2789,10 @@ class TestTRA_F4_007_SelectModuleFullDirectionMatch:
             conformance_level=ConformanceLevel.L3_STRICT,
             model_endpoint="rule-based",
             model_version="test",
-            base_dir="/tmp",
-            cache_directory="/tmp/cache",
-            compilation_dir="/tmp/art",
-            audit_trace="/tmp/audit.jsonl",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
         )
         kernel = TRAKernel(cfg, registry=registry)
         # No full match; source-only fallback picks fr_en.
@@ -5298,6 +5310,10 @@ class TestTRA_D7_001_NoHardcodedPaths:
     """TRA-D7-001 (round 7): test files must NOT contain hardcoded absolute
     paths like the project root because they break portability across
     containers/checkouts. Use Path(__file__).resolve().parent.parent instead.
+
+    TRA-D7-008 (round 7 Batch 8): test files must also NOT contain hardcoded
+    /tmp/ paths because they break test isolation (collisions when tests run
+    in parallel). Use the tmp_path pytest fixture instead.
     """
 
     # The hardcoded path pattern from R6 D6-003. Constructed from parts so
@@ -5329,6 +5345,26 @@ class TestTRA_D7_001_NoHardcodedPaths:
         assert not offenders, (
             f"TRA-D7-001: hardcoded paths found in test files: {offenders}. "
             f"Use Path(__file__).resolve().parent.parent instead."
+        )
+
+    def test_no_hardcoded_tmp_paths_in_test_files(self) -> None:
+        """TRA-D7-008 (round 7 Batch 8): test files must NOT contain hardcoded
+        /tmp/ paths. Use the tmp_path pytest fixture instead for test isolation.
+        """
+        from pathlib import Path
+
+        # Construct the search pattern from parts so this test file itself
+        # doesn't contain the literal string (which would self-trigger).
+        _tmp_prefix = '"' + "/tm" + "p/"
+        tests_dir = Path(__file__).resolve().parent
+        offenders = []
+        for test_file in tests_dir.glob("test_*.py"):
+            text = test_file.read_text(encoding="utf-8")
+            if _tmp_prefix in text:
+                offenders.append(test_file.name)
+        assert not offenders, (
+            f"TRA-D7-008: hardcoded /tmp/ paths found in test files: "
+            f"{offenders}. Use the tmp_path pytest fixture instead."
         )
 
 

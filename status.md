@@ -1,4 +1,4 @@
-> **⚠️ STALE — historical session log.** This file is frozen at commit `4d97aa1` and references "103 pytest passing". The actual state at HEAD `6d3144a` (Round 7 audit, 2026-07-21) is **328 tests across 16 test files** + L3 CONFORMANT. See `CLAUDE.md` → "Prototype engine status" for current state and `docs/audit/round7/` for the latest audit.
+> **⚠️ STALE — historical session log.** This file is frozen at commit `4d97aa1` and references "103 pytest passing". The actual state at HEAD `6d3144a` (Round 7 audit, 2026-07-21) is **329 tests across 16 test files** + L3 CONFORMANT. See `CLAUDE.md` → "Prototype engine status" for current state and `docs/audit/round7/` for the latest audit.
 
 Now let me commit the Phase 6 work. First, git status and diff. 
  

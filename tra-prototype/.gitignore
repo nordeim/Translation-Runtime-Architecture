@@ -13,3 +13,4 @@ __pycache__/
 cache/
 compilation_artifacts/
 audit_trace.jsonl
+mutants/
