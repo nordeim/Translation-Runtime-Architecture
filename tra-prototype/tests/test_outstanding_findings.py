@@ -6097,3 +6097,201 @@ class TestTRA_A7_005_IsaWrappedInRecover:
             f"{len(exception_records)} EXCEPTION_HANDLER records. "
             f"All records: {[r.get('isa_instruction') for r in records]}"
         )
+
+    def test_verify_output_raising_initial_routes_through_recover(
+        self, tmp_path: Path
+    ) -> None:
+        """R7 Batch 9: if the initial verify_output (before repair loop)
+        raises a TRAException, the kernel must dispatch it through _recover
+        and continue with empty diagnostics (not crash).
+        Covers kernel.py:387-389.
+        """
+        import json
+
+        import tra.kernel as kernel_mod
+        from tra.config import BootstrapConfig
+        from tra.exceptions import TRAException
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L1_BASIC,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        kernel = TRAKernel(cfg)
+
+        # Monkeypatch verify_output in the kernel module's namespace (not
+        # isa module — kernel.py does `from .isa import verify_output` which
+        # binds the name in kernel's namespace at import time).
+        original_verify_fn = kernel_mod.verify_output
+        call_count = [0]
+
+        def boom_verify(target, src, ctx, audit):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise TRAException("synthetic verify_output failure")
+            return original_verify_fn(target, src, ctx, audit)
+
+        kernel_mod.verify_output = boom_verify
+        try:
+            # At L1, the kernel should not raise.
+            result = kernel.run("# Test\n\nParagraph.\n")
+            # Should complete (possibly with empty output).
+            assert isinstance(result, str)
+        finally:
+            kernel_mod.verify_output = original_verify_fn
+
+        # The audit trail must contain an EXCEPTION_HANDLER record.
+        kernel.audit.flush()
+        with open(str(tmp_path / "audit.jsonl")) as f:
+            records = [json.loads(line) for line in f]
+        exception_records = [
+            r for r in records if r.get("isa_instruction") == "EXCEPTION_HANDLER"
+        ]
+        assert exception_records, (
+            "TRA-A7-005: expected EXCEPTION_HANDLER record after verify_output "
+            f"raised. Got {len(exception_records)} records."
+        )
+
+    def test_verify_output_raising_in_repair_loop_routes_through_recover(
+        self, tmp_path: Path
+    ) -> None:
+        """R7 Batch 9: if verify_output raises during the repair loop's
+        re-verification, the kernel must dispatch it through _recover and
+        break the loop (not crash).
+        Covers kernel.py:772-774.
+        """
+        import json
+
+        import tra.kernel as kernel_mod
+        from tra.config import BootstrapConfig
+        from tra.exceptions import TRAException
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L1_BASIC,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        kernel = TRAKernel(cfg)
+
+        # Monkeypatch verify_output in the kernel module's namespace.
+        original_verify_fn = kernel_mod.verify_output
+        call_count = [0]
+
+        def boom_verify(target, src, ctx, audit):
+            call_count[0] += 1
+            # 1st call: return a WARNING diagnostic to enter the repair loop.
+            if call_count[0] == 1:
+                from tra.diagnostics import Diagnostic
+                from tra.memory import Severity
+
+                return [
+                    Diagnostic(
+                        severity=Severity.WARNING,
+                        subsystem="test",
+                        issue="synthetic warning to trigger repair loop",
+                        evidence="test",
+                        action="test",
+                    )
+                ]
+            # 2nd call (repair loop re-verification): raise.
+            raise TRAException("synthetic verify_output failure in repair loop")
+
+        kernel_mod.verify_output = boom_verify
+        try:
+            # At L1, the kernel should not raise.
+            result = kernel.run("# Test\n\nParagraph.\n")
+            assert isinstance(result, str)
+        finally:
+            kernel_mod.verify_output = original_verify_fn
+
+        # The audit trail must contain an EXCEPTION_HANDLER record.
+        kernel.audit.flush()
+        with open(str(tmp_path / "audit.jsonl")) as f:
+            records = [json.loads(line) for line in f]
+        exception_records = [
+            r for r in records if r.get("isa_instruction") == "EXCEPTION_HANDLER"
+        ]
+        assert exception_records, (
+            "TRA-A7-005: expected EXCEPTION_HANDLER record after verify_output "
+            f"raised in repair loop. Got {len(exception_records)} records."
+        )
+
+    def test_verify_output_raising_at_l3_gate_raises_conformance_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """R7 Batch 9: if verify_output raises at the L3 gate (the final
+        post-repair check), the kernel must:
+        1. Dispatch the exception through _recover (EXCEPTION_HANDLER record)
+        2. Treat the failure as a BLOCKING diagnostic
+        3. Raise ConformanceFailure (we can't certify what we can't verify)
+        Covers kernel.py:435-437.
+        """
+        import json
+
+        import tra.kernel as kernel_mod
+        from tra.config import BootstrapConfig
+        from tra.exceptions import ConformanceFailure, TRAException
+        from tra.kernel import TRAKernel
+        from tra.memory import ConformanceLevel
+
+        cfg = BootstrapConfig(
+            language_pair="ZH -> EN",
+            domain="test",
+            conformance_level=ConformanceLevel.L3_STRICT,
+            model_endpoint="rule-based",
+            model_version="test",
+            base_dir=str(tmp_path),
+            cache_directory=str(tmp_path / "cache"),
+            compilation_dir=str(tmp_path / "art"),
+            audit_trace=str(tmp_path / "audit.jsonl"),
+        )
+        kernel = TRAKernel(cfg)
+
+        # Monkeypatch verify_output to raise on the 2nd call (L3 gate).
+        original_verify_fn = kernel_mod.verify_output
+        call_count = [0]
+
+        def boom_verify(target, src, ctx, audit):
+            call_count[0] += 1
+            # 1st call (initial diagnostics): return empty list (no repairs).
+            if call_count[0] == 1:
+                return []
+            # 2nd call (L3 gate): raise.
+            raise TRAException("synthetic verify_output failure at L3 gate")
+
+        kernel_mod.verify_output = boom_verify
+        try:
+            # At L3, the kernel MUST raise ConformanceFailure (we can't
+            # certify what we can't verify).
+            with pytest.raises(ConformanceFailure, match=r"BLOCKING"):
+                kernel.run("# Test\n\nParagraph.\n")
+        finally:
+            kernel_mod.verify_output = original_verify_fn
+
+        # The audit trail must contain an EXCEPTION_HANDLER record.
+        kernel.audit.flush()
+        with open(str(tmp_path / "audit.jsonl")) as f:
+            records = [json.loads(line) for line in f]
+        exception_records = [
+            r for r in records if r.get("isa_instruction") == "EXCEPTION_HANDLER"
+        ]
+        assert exception_records, (
+            "TRA-A7-005: expected EXCEPTION_HANDLER record after verify_output "
+            f"raised at L3 gate. Got {len(exception_records)} records."
+        )
